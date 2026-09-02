@@ -1,0 +1,107 @@
+{
+  "name": "local-ollama-chat",
+  "displayName": "Local Ollama Chat",
+  "description": "Connect VS Code chat to a local Ollama instance and choose from your local models.",
+  "version": "0.1.0",
+  "publisher": "local-ollama",
+  "private": true,
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onChatParticipant:local-ollama.participant"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "localOllama.connect",
+        "title": "Local Ollama: Connect"
+      },
+      {
+        "command": "localOllama.selectModel",
+        "title": "Local Ollama: Select Model"
+      },
+      {
+        "command": "localOllama.listModels",
+        "title": "Local Ollama: List Models"
+      },
+      {
+        "command": "localOllama.applySuggestedEdit",
+        "title": "Local Ollama: Apply Suggested Edit"
+      },
+      {
+        "command": "localOllama.refactorProject",
+        "title": "Local Ollama: Refactor Project"
+      },
+      {
+        "command": "localOllama.updateFromWorkspace",
+        "title": "Local Ollama: Update From Workspace"
+      }
+    ],
+    "configuration": {
+      "title": "Local Ollama",
+      "properties": {
+        "localOllama.baseUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Base URL for your local Ollama instance."
+        },
+        "localOllama.defaultModel": {
+          "type": "string",
+          "default": "qwen2.5-coder:7b",
+          "description": "Default local model to use for chat prompts."
+        },
+        "localOllama.temperature": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Temperature passed to Ollama generation requests."
+        }
+      }
+    },
+    "chatParticipants": [
+      {
+        "id": "local-ollama.participant",
+        "name": "local-ollama",
+        "fullName": "Local Ollama",
+        "description": "Chat with your local Ollama agent in VS Code.",
+        "commands": [
+          {
+            "name": "models",
+            "description": "List available local Ollama models"
+          },
+          {
+            "name": "connect",
+            "description": "Configure base URL and default model"
+          },
+          {
+            "name": "edit",
+            "description": "Propose file edits, then apply or discard"
+          },
+          {
+            "name": "refactor",
+            "description": "Propose project refactor edits, then apply or discard"
+          }
+        ],
+        "isSticky": true
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "package": "vsce package",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.1",
+    "@types/vscode": "^1.96.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.8.3"
+  }
+}
