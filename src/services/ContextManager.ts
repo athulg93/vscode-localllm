@@ -38,6 +38,7 @@ const INTENT_PATTERNS: Array<{ intent: PromptIntent; patterns: RegExp[] }> = [
     patterns: [
       /\b(edit|fix|update|refactor|rewrite|improve|change)\b[\s\S]*\b(this|current)\s+project\b/i,
       /\b(refactor|improve|update)\s+project\b/i,
+      /\b(create|add|generate|write)\b[\s\S]*\b(new\s+)?(file|files|folder|folders|directory|directories|readme|documentation|instructions?)\b/i,
     ],
   },
   {
@@ -45,6 +46,7 @@ const INTENT_PATTERNS: Array<{ intent: PromptIntent; patterns: RegExp[] }> = [
     patterns: [
       /\b(edit|fix|update|refactor|rewrite|improve|change)\b[\s\S]*\b(this|current|active)\s+file\b/i,
       /\b(edit|fix|update|refactor|rewrite)\s+file\b/i,
+      /\b(create|add|write)\b[\s\S]*\b(this|current|active)\s+file\b/i,
     ],
   },
   {
@@ -122,7 +124,7 @@ export class ContextManager {
   }
 
   private mightNeedContext(prompt: string): boolean {
-    return /\b(this|current|active|that|it|here|project|workspace|repo|repository|folder|file|code|function|class|module|component|error|issue|bug|fix|change|update|refactor|improve)\b/i.test(prompt);
+    return /\b(this|current|active|that|it|here|project|workspace|repo|repository|folder|file|code|function|class|module|component|error|issue|bug|fix|change|update|refactor|improve|create|add|write|generate|delete|rename|move)\b/i.test(prompt);
   }
 
   private async selectContextDynamically(prompt: string, options: ContextBuildOptions): Promise<ContextSelectionResponse> {
