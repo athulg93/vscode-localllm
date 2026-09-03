@@ -4,3 +4,4 @@ src/**
 .gitignore
 npm-debug.log
 package-lock.json
+.*.update.lock

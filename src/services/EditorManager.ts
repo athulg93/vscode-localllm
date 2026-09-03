@@ -46,9 +46,13 @@ export class EditorManager {
   constructor(private readonly outputChannel: vscode.OutputChannel) {}
 
   async runEditWorkflow(options: EditWorkflowOptions): Promise<boolean> {
+    options.stream.progress('Understanding the requested file operation...');
     const editPlan = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Window, title: 'Planning file edits...' },
-      async () => this.proposeEdits(options),
+      async (progress) => {
+        progress.report({ message: 'Reading relevant workspace context...' });
+        return this.proposeEdits(options);
+      },
     );
     const edits = (editPlan.edits ?? []).filter((edit) => this.isRunnableEdit(edit));
 
@@ -79,6 +83,7 @@ export class EditorManager {
       return true;
     }
 
+    options.stream.progress(`Prepared ${candidates.length} validated file operation(s).`);
     await this.previewProposedEdits(candidates);
 
     const selectedCandidates = await this.collectPerFileDecisions(candidates);
@@ -129,7 +134,22 @@ export class EditorManager {
     try {
       return JSON.parse(this.extractJsonBlock(raw)) as ProposedEditsResponse;
     } catch {
-      throw new Error('Could not parse edit plan from Ollama. Ask again with a more specific edit request.');
+      this.outputChannel.appendLine('[Edit] Ollama returned a non-JSON edit plan; retrying with a stricter format request.');
+      const retry = await options.client.sendPrompt(
+        options.model,
+        `${contextualPrompt}\n\nYour previous response could not be parsed. Return only the JSON edit plan now. Do not include markdown, explanations, or code fences.`,
+        options.temperature,
+        {
+          systemPrompt: EDIT_PLAN_SYSTEM_PROMPT,
+          token: options.token,
+        },
+      );
+
+      try {
+        return JSON.parse(this.extractJsonBlock(retry)) as ProposedEditsResponse;
+      } catch {
+        throw new Error('Could not parse an edit plan from Ollama after two attempts. Check the Local Ollama output channel and try a more specific request.');
+      }
     }
   }
 
