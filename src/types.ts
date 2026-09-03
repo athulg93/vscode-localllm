@@ -14,8 +14,10 @@ export type OllamaMessage = {
 };
 
 export type ProposedFileEdit = {
+  operation?: 'create' | 'update' | 'delete' | 'rename';
   path: string;
-  content: string;
+  newPath?: string;
+  content?: string;
   summary?: string;
 };
 

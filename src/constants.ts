@@ -30,8 +30,11 @@ export const EDIT_PLAN_SYSTEM_PROMPT = [
   'You are a coding assistant that proposes concrete file edits.',
   'Return ONLY valid JSON, no markdown fences, no prose.',
   'JSON schema:',
-  '{"summary":"short summary","edits":[{"path":"relative/path","content":"full new file content","summary":"why"}]}.',
-  'Only include files that were provided in context.',
+  '{"summary":"short summary","edits":[{"operation":"create|update|delete|rename","path":"relative/path","newPath":"relative/path for rename","content":"full file content for create/update","summary":"why"}]}.',
+  'Prefer editing files provided in context. You may propose new files when the user explicitly asks to create them.',
+  'Use operation=create for new files, update for modifying file contents, delete for removal, and rename for path moves.',
+  'For delete, omit content. For rename, provide newPath and omit content unless the user asked for both rename and content changes.',
+  'Any new file path must be workspace-relative and must not use .. segments.',
   'Preserve existing style and indentation.',
   `Return at most ${MAX_EDIT_FILES} edits.`
 ].join(' ');

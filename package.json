@@ -62,6 +62,11 @@
           "minimum": 0,
           "maximum": 1,
           "description": "Temperature passed to Ollama generation requests."
+        },
+        "localOllama.autoCreateDirectories": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically create missing folders for AI-proposed create/rename operations inside the workspace."
         }
       }
     },

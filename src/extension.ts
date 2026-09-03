@@ -52,6 +52,41 @@ async function promptForModel(baseUrl: string, outputChannel: vscode.OutputChann
   return selection;
 }
 
+function parseInlineModelDirective(prompt: string): { requestedModel?: string; remainingPrompt: string } {
+  const trimmed = prompt.trim();
+  if (trimmed === '@') {
+    return { requestedModel: 'models', remainingPrompt: '' };
+  }
+
+  const match = trimmed.match(/^@([^\s]+)\s*(.*)$/s);
+  if (!match) {
+    return { remainingPrompt: prompt };
+  }
+
+  const [, requestedModelRaw, remainingPrompt] = match;
+  const requestedModel = requestedModelRaw?.trim();
+  if (!requestedModel) {
+    return { remainingPrompt: prompt };
+  }
+
+  return { requestedModel, remainingPrompt: remainingPrompt?.trim() ?? '' };
+}
+
+async function resolveModelName(client: OllamaClient, requestedModel: string): Promise<string> {
+  const models = await client.listModels();
+  const exact = models.find((model) => model === requestedModel);
+  if (exact) {
+    return exact;
+  }
+
+  const caseInsensitive = models.find((model) => model.toLowerCase() === requestedModel.toLowerCase());
+  if (caseInsensitive) {
+    return caseInsensitive;
+  }
+
+  throw new Error(`Model "${requestedModel}" was not found on the local Ollama server. Available models: ${models.join(', ') || 'none'}.`);
+}
+
 function createNotificationStream(outputChannel: vscode.OutputChannel): vscode.ChatResponseStream {
   const streamLike: vscode.ChatResponseStream = {
     markdown: (value: string | vscode.MarkdownString) => {
@@ -85,15 +120,48 @@ function registerChatParticipant(
 ) {
   const participant = vscode.chat.createChatParticipant('local-ollama.participant', async (request, _, stream, token) => {
     const baseUrl = getSetting<string>('baseUrl', DEFAULT_BASE_URL);
-    const defaultModel = getSetting<string>('defaultModel', DEFAULT_MODEL);
+    let defaultModel = getSetting<string>('defaultModel', DEFAULT_MODEL);
     const temperature = getSetting<number>('temperature', DEFAULT_TEMPERATURE);
     const client = new OllamaClient(baseUrl, outputChannel);
+    const { requestedModel, remainingPrompt } = parseInlineModelDirective(request.prompt);
+    const effectivePrompt = requestedModel ? remainingPrompt : request.prompt;
+
+    if (requestedModel) {
+      if (requestedModel.toLowerCase() === 'models') {
+        try {
+          const models = await client.listModels();
+          const summary = models.length ? models.map((model) => `- ${model}`).join('\n') : 'No models found.';
+          stream.markdown(`Available local Ollama models:\n\n${summary}\n\nUse @<model-name> in chat to switch models.`);
+          return;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          stream.markdown(`I could not query the local Ollama server.\n\n${message}`);
+          return;
+        }
+      }
+
+      try {
+        defaultModel = await resolveModelName(client, requestedModel);
+        await vscode.workspace.getConfiguration('localOllama').update('defaultModel', defaultModel, vscode.ConfigurationTarget.Global);
+
+        if (!effectivePrompt.trim()) {
+          stream.markdown(`Switched default model to **${defaultModel}**. Send your next message to continue.`);
+          return;
+        }
+
+        stream.progress(`Using model ${defaultModel} for this request.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        stream.markdown(`I could not switch models.\n\n${message}`);
+        return;
+      }
+    }
 
     if (request.command === 'models') {
       try {
         const models = await client.listModels();
         const summary = models.length ? models.map((model) => `- ${model}`).join('\n') : 'No models found.';
-        stream.markdown(`Available local Ollama models:\n\n${summary}`);
+        stream.markdown(`Available local Ollama models:\n\n${summary}\n\nUse @<model-name> in chat to switch models.`);
         return;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
@@ -109,7 +177,7 @@ function registerChatParticipant(
           client,
           contextManager,
           model: resolvedModel,
-          prompt: request.prompt,
+          prompt: effectivePrompt,
           temperature,
           stream,
           token,
@@ -149,13 +217,13 @@ function registerChatParticipant(
         return;
       }
 
-      const promptIntent = contextManager.classifyPromptIntent(request.prompt);
+      const promptIntent = contextManager.classifyPromptIntent(effectivePrompt);
       if (promptIntent === 'editFile' || promptIntent === 'editProject') {
         await editorManager.runEditWorkflow({
           client,
           contextManager,
           model: resolvedModel,
-          prompt: request.prompt,
+          prompt: effectivePrompt,
           temperature,
           stream,
           token,
@@ -163,7 +231,7 @@ function registerChatParticipant(
         return;
       }
 
-      const promptWithContext = await contextManager.buildPromptWithImplicitContext(request.prompt, {
+      const promptWithContext = await contextManager.buildPromptWithImplicitContext(effectivePrompt, {
         client,
         model: resolvedModel,
         temperature,
