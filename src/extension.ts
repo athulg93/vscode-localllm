@@ -4,6 +4,7 @@ import { ContextManager } from './services/ContextManager';
 import { EditorManager } from './services/EditorManager';
 import { OllamaClient } from './services/OllamaClient';
 import { UpdateManager } from './services/UpdateManager';
+import { ActivityLogger } from './services/ActivityLogger';
 
 function getSetting<T>(section: string, fallback: T): T {
   const value = vscode.workspace.getConfiguration('localOllama').get<T>(section, fallback);
@@ -22,7 +23,7 @@ async function promptForBaseUrl(): Promise<string | undefined> {
   return result?.trim() || undefined;
 }
 
-async function promptForModel(baseUrl: string, outputChannel: vscode.OutputChannel): Promise<string | undefined> {
+async function promptForModel(baseUrl: string, outputChannel: ActivityLogger): Promise<string | undefined> {
   let models: string[] = [];
   const client = new OllamaClient(baseUrl, outputChannel);
 
@@ -116,9 +117,10 @@ function registerChatParticipant(
   context: vscode.ExtensionContext,
   contextManager: ContextManager,
   editorManager: EditorManager,
-  outputChannel: vscode.OutputChannel,
+  outputChannel: ActivityLogger,
 ) {
   const participant = vscode.chat.createChatParticipant('local-ollama.participant', async (request, _, stream, token) => {
+    outputChannel.appendLine(`[Chat] Request started; command=${request.command ?? 'none'}, prompt length=${request.prompt.length}.`);
     const baseUrl = getSetting<string>('baseUrl', DEFAULT_BASE_URL);
     let defaultModel = getSetting<string>('defaultModel', DEFAULT_MODEL);
     const temperature = getSetting<number>('temperature', DEFAULT_TEMPERATURE);
@@ -142,6 +144,7 @@ function registerChatParticipant(
 
       try {
         defaultModel = await resolveModelName(client, requestedModel);
+        outputChannel.appendLine(`[Chat] Inline model selected: ${defaultModel}.`);
         await vscode.workspace.getConfiguration('localOllama').update('defaultModel', defaultModel, vscode.ConfigurationTarget.Global);
 
         if (!effectivePrompt.trim()) {
@@ -172,6 +175,7 @@ function registerChatParticipant(
 
     if (request.command === 'edit' || request.command === 'refactor') {
       try {
+        outputChannel.appendLine(`[Chat] Explicit ${request.command} workflow requested.`);
         const resolvedModel = await client.ensureModelExists(defaultModel);
         await editorManager.runEditWorkflow({
           client,
@@ -218,6 +222,7 @@ function registerChatParticipant(
       }
 
       const promptIntent = contextManager.classifyPromptIntent(effectivePrompt);
+      outputChannel.appendLine(`[Chat] Prompt intent classified as ${promptIntent}.`);
       if (promptIntent === 'editFile' || promptIntent === 'editProject') {
         await editorManager.runEditWorkflow({
           client,
@@ -259,9 +264,13 @@ function registerChatParticipant(
 
 export function activate(context: vscode.ExtensionContext) {
   const outputChannel = vscode.window.createOutputChannel('Local Ollama');
-  const contextManager = new ContextManager(outputChannel);
-  const editorManager = new EditorManager(outputChannel);
-  const updateManager = new UpdateManager(outputChannel);
+  const logDirectory = context.globalStorageUri;
+  const logUri = vscode.Uri.joinPath(logDirectory, 'activity.log');
+  const activityLogger = new ActivityLogger(outputChannel, logDirectory, logUri);
+  activityLogger.appendLine(`[Lifecycle] Extension activated; version=${context.extension.packageJSON.version ?? 'unknown'}; log=${activityLogger.logPath}.`);
+  const contextManager = new ContextManager(activityLogger);
+  const editorManager = new EditorManager(activityLogger);
+  const updateManager = new UpdateManager(activityLogger);
   const extensionPackage = context.extension.packageJSON as { name?: string; publisher?: string; version?: string };
   const extensionId = extensionPackage.publisher && extensionPackage.name
     ? `${extensionPackage.publisher}.${extensionPackage.name}`
@@ -274,7 +283,7 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    const model = await promptForModel(baseUrl, outputChannel);
+    const model = await promptForModel(baseUrl, activityLogger);
     if (!model) {
       return;
     }
@@ -287,7 +296,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const selectModelCommand = vscode.commands.registerCommand('localOllama.selectModel', async () => {
     const baseUrl = getSetting<string>('baseUrl', DEFAULT_BASE_URL);
-    const model = await promptForModel(baseUrl, outputChannel);
+    const model = await promptForModel(baseUrl, activityLogger);
     if (!model) {
       return;
     }
@@ -298,7 +307,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const listModelsCommand = vscode.commands.registerCommand('localOllama.listModels', async () => {
     const baseUrl = getSetting<string>('baseUrl', DEFAULT_BASE_URL);
-    const client = new OllamaClient(baseUrl, outputChannel);
+    const client = new OllamaClient(baseUrl, activityLogger);
 
     try {
       const models = await client.listModels();
@@ -318,7 +327,7 @@ export function activate(context: vscode.ExtensionContext) {
     const baseUrl = getSetting<string>('baseUrl', DEFAULT_BASE_URL);
     const defaultModel = getSetting<string>('defaultModel', DEFAULT_MODEL);
     const temperature = getSetting<number>('temperature', DEFAULT_TEMPERATURE);
-    const client = new OllamaClient(baseUrl, outputChannel);
+    const client = new OllamaClient(baseUrl, activityLogger);
 
     const prompt = await vscode.window.showInputBox({
       prompt: 'Describe how you want the current file changed',
@@ -350,7 +359,7 @@ export function activate(context: vscode.ExtensionContext) {
     const baseUrl = getSetting<string>('baseUrl', DEFAULT_BASE_URL);
     const defaultModel = getSetting<string>('defaultModel', DEFAULT_MODEL);
     const temperature = getSetting<number>('temperature', DEFAULT_TEMPERATURE);
-    const client = new OllamaClient(baseUrl, outputChannel);
+    const client = new OllamaClient(baseUrl, activityLogger);
 
     const prompt = await vscode.window.showInputBox({
       prompt: 'Describe what project refactor you want',
@@ -388,8 +397,21 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  context.subscriptions.push(outputChannel, connectCommand, selectModelCommand, listModelsCommand, applySuggestedEditCommand, refactorProjectCommand, updateFromWorkspaceCommand);
-  registerChatParticipant(context, contextManager, editorManager, outputChannel);
+  const openActivityLogCommand = vscode.commands.registerCommand('localOllama.openActivityLog', async () => {
+    await vscode.window.showTextDocument(logUri, { preview: false });
+  });
+
+  context.subscriptions.push(
+    outputChannel,
+    connectCommand,
+    selectModelCommand,
+    listModelsCommand,
+    applySuggestedEditCommand,
+    refactorProjectCommand,
+    updateFromWorkspaceCommand,
+    openActivityLogCommand,
+  );
+  registerChatParticipant(context, contextManager, editorManager, activityLogger);
 }
 
 export function deactivate() {

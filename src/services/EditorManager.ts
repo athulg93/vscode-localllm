@@ -10,6 +10,8 @@ import {
 import { ProposedEditsResponse, ProposedFileEdit } from '../types';
 import { ContextManager } from './ContextManager';
 import { OllamaClient } from './OllamaClient';
+import { parseEditPlan } from '../core/EditPlanParser';
+import { Logger } from '../core/contracts';
 
 type EditWorkflowOptions = {
   client: OllamaClient;
@@ -43,7 +45,7 @@ type EditValidationResult =
   | { ok: false; reason: string };
 
 export class EditorManager {
-  constructor(private readonly outputChannel: vscode.OutputChannel) {}
+  constructor(private readonly outputChannel: Logger) {}
 
   async runEditWorkflow(options: EditWorkflowOptions): Promise<boolean> {
     options.stream.progress('Understanding the requested file operation...');
@@ -54,6 +56,7 @@ export class EditorManager {
         return this.proposeEdits(options);
       },
     );
+    this.outputChannel.appendLine(`[Edit] Model returned ${editPlan.edits?.length ?? 0} proposed operation(s).`);
     const edits = (editPlan.edits ?? []).filter((edit) => this.isRunnableEdit(edit));
 
     if (edits.length === 0) {
@@ -78,6 +81,7 @@ export class EditorManager {
     ].join('\n'));
 
     const candidates = await this.prepareEditCandidates(edits);
+    this.outputChannel.appendLine(`[Edit] ${candidates.length} operation(s) passed validation.`);
     if (candidates.length === 0) {
       options.stream.markdown('No validated edits are safe to apply. Check the Local Ollama output channel for skip reasons.');
       return true;
@@ -97,6 +101,8 @@ export class EditorManager {
       return true;
     }
 
+    this.outputChannel.appendLine(`[Edit] User kept ${selectedCandidates.length} of ${candidates.length} validated operation(s).`);
+
     const validationSkipped = edits
       .slice(0, MAX_EDIT_FILES)
       .filter((edit) => !candidates.some((candidate) => candidate.path === edit.path && candidate.operation === (edit.operation ?? 'update')))
@@ -106,6 +112,7 @@ export class EditorManager {
       .map((candidate) => `${this.describeCandidate(candidate)} (discarded by user)`);
 
     const { applied, skipped } = await this.applyProposedEdits(selectedCandidates);
+    this.outputChannel.appendLine(`[Edit] Apply completed; applied=${applied.length}, skipped=${skipped.length}.`);
     const combinedSkipped = [...validationSkipped, ...discardedByUser, ...skipped];
     options.stream.markdown([
       '### Edit Result',
@@ -120,24 +127,27 @@ export class EditorManager {
   }
 
   private async proposeEdits(options: EditWorkflowOptions): Promise<ProposedEditsResponse> {
-    const contextualPrompt = await options.contextManager.buildPromptWithImplicitContext(options.prompt, {
-      client: options.client,
-      model: options.model,
-      temperature: options.temperature,
-      token: options.token,
-    });
-    const raw = await options.client.sendPrompt(options.model, contextualPrompt, options.temperature, {
+    const toolPrompt = [
+      options.prompt,
+      '',
+      'You may use the read_file tool to inspect only the workspace-relative files needed for this request.',
+      'Do not assume you can access the filesystem directly. For an existing file, read the relevant lines before proposing an update.',
+      'For a new file, do not read a nonexistent path; return a create operation with the requested workspace-relative path.',
+    ].join('\n');
+    const raw = await options.client.sendPromptWithTools(options.model, toolPrompt, options.temperature, {
       systemPrompt: EDIT_PLAN_SYSTEM_PROMPT,
       token: options.token,
+      tools: options.contextManager.getFileTools(),
+      executeTool: (name, arguments_) => options.contextManager.executeFileTool(name, arguments_),
     });
 
     try {
-      return JSON.parse(this.extractJsonBlock(raw)) as ProposedEditsResponse;
+      return parseEditPlan(raw);
     } catch {
       this.outputChannel.appendLine('[Edit] Ollama returned a non-JSON edit plan; retrying with a stricter format request.');
       const retry = await options.client.sendPrompt(
         options.model,
-        `${contextualPrompt}\n\nYour previous response could not be parsed. Return only the JSON edit plan now. Do not include markdown, explanations, or code fences.`,
+        `${toolPrompt}\n\nYour previous response could not be parsed. Return only the JSON edit plan now. Do not include markdown, explanations, or code fences.`,
         options.temperature,
         {
           systemPrompt: EDIT_PLAN_SYSTEM_PROMPT,
@@ -146,7 +156,7 @@ export class EditorManager {
       );
 
       try {
-        return JSON.parse(this.extractJsonBlock(retry)) as ProposedEditsResponse;
+        return parseEditPlan(retry);
       } catch {
         throw new Error('Could not parse an edit plan from Ollama after two attempts. Check the Local Ollama output channel and try a more specific request.');
       }
@@ -515,23 +525,4 @@ export class EditorManager {
     return new vscode.Range(0, 0, lastLine, document.lineAt(lastLine).text.length);
   }
 
-  private extractJsonBlock(raw: string): string {
-    const trimmed = raw.trim();
-    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-      return trimmed;
-    }
-
-    const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    if (fencedMatch && fencedMatch[1]) {
-      return fencedMatch[1].trim();
-    }
-
-    const firstBrace = trimmed.indexOf('{');
-    const lastBrace = trimmed.lastIndexOf('}');
-    if (firstBrace >= 0 && lastBrace > firstBrace) {
-      return trimmed.slice(firstBrace, lastBrace + 1).trim();
-    }
-
-    return trimmed;
-  }
 }

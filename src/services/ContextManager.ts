@@ -5,20 +5,26 @@ import {
   CONTEXT_SELECTION_SYSTEM_PROMPT,
   MAX_CONTEXT_CANDIDATE_FILES,
   MAX_FILE_CHARS,
+  MAX_EDIT_CONTEXT_CHARS,
   MAX_PROJECT_FILES,
   MAX_PROJECT_TOTAL_CHARS,
   MAX_TARGETED_CONTEXT_FILES,
+  PROTECTED_PATH_SEGMENTS,
   PROJECT_EXCLUDE_GLOB,
   TEXT_FILE_EXTENSIONS,
 } from '../constants';
 import { OllamaClient } from './OllamaClient';
+import { classifyPromptIntent } from '../core/PromptIntentClassifier';
+import { Logger } from '../core/contracts';
 import { ContextSelectionResponse, PromptIntent } from '../types';
+import { OllamaTool } from './OllamaClient';
 
 type ContextBuildOptions = {
   client: OllamaClient;
   model: string;
   temperature: number;
   token?: vscode.CancellationToken;
+  maxTotalChars?: number;
 };
 
 type ContextCacheEntry = {
@@ -32,66 +38,84 @@ type ContextPlan = {
   reason?: string;
 };
 
-const INTENT_PATTERNS: Array<{ intent: PromptIntent; patterns: RegExp[] }> = [
-  {
-    intent: PromptIntent.EditProject,
-    patterns: [
-      /\b(edit|fix|update|refactor|rewrite|improve|change)\b[\s\S]*\b(this|current)\s+project\b/i,
-      /\b(refactor|improve|update)\s+project\b/i,
-      /\b(create|add|generate|write)\b[\s\S]*\b(new\s+)?(file|files|folder|folders|directory|directories|readme|documentation|instructions?)\b/i,
-    ],
-  },
-  {
-    intent: PromptIntent.EditFile,
-    patterns: [
-      /\b(edit|fix|update|refactor|rewrite|improve|change)\b[\s\S]*\b(this|current|active)\s+file\b/i,
-      /\b(edit|fix|update|refactor|rewrite)\s+file\b/i,
-      /\b(create|add|write)\b[\s\S]*\b(this|current|active)\s+file\b/i,
-    ],
-  },
-  {
-    intent: PromptIntent.AnalyzeProject,
-    patterns: [
-      /\b(analy[sz]e|review|summari[sz]e|explain)\b[\s\S]*\b(this|current)\s+project\b/i,
-      /\b(analy[sz]e|review|summari[sz]e|explain)\s+project\b/i,
-    ],
-  },
-  {
-    intent: PromptIntent.AnalyzeFile,
-    patterns: [
-      /\b(analy[sz]e|review|explain)\b[\s\S]*\b(this|current|active)\s+file\b/i,
-      /\b(analy[sz]e|review|explain)\s+file\b/i,
-    ],
-  },
-];
-
 export class ContextManager {
   private readonly cache = new Map<string, ContextCacheEntry>();
 
-  constructor(private readonly outputChannel: vscode.OutputChannel) {}
+  constructor(private readonly outputChannel: Logger) {}
 
   classifyPromptIntent(prompt: string): PromptIntent {
-    for (const rule of INTENT_PATTERNS) {
-      if (rule.patterns.some((pattern) => pattern.test(prompt))) {
-        return rule.intent;
-      }
+    return classifyPromptIntent(prompt);
+  }
+
+  getFileTools(): OllamaTool[] {
+    return [{
+      type: 'function',
+      function: {
+        name: 'read_file',
+        description: 'Read a bounded line range from a text file in the current workspace. Use this before proposing updates to an existing file.',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Workspace-relative file path.' },
+            startLine: { type: 'integer', minimum: 1, description: 'First line to read, inclusive.' },
+            endLine: { type: 'integer', minimum: 1, description: 'Last line to read, inclusive. Maximum 240 lines.' },
+          },
+          required: ['path'],
+        },
+      },
+    }];
+  }
+
+  async executeFileTool(name: string, arguments_: Record<string, unknown>): Promise<string> {
+    if (name !== 'read_file') {
+      return JSON.stringify({ error: `Unknown file tool: ${name}` });
     }
 
-    return PromptIntent.General;
+    const path = typeof arguments_.path === 'string' ? arguments_.path.replace(/\\/g, '/') : '';
+    if (!path || !this.isSafeToolPath(path)) {
+      return JSON.stringify({ error: 'The requested path is not allowed. Use a workspace-relative text-file path without .. segments.' });
+    }
+
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      return JSON.stringify({ error: 'No workspace folder is open.' });
+    }
+
+    const matches = await vscode.workspace.findFiles(path, undefined, 2);
+    if (matches.length !== 1) {
+      return JSON.stringify({ error: `Could not resolve exactly one workspace file for ${path}.` });
+    }
+
+    try {
+      const text = await this.readDocumentText(matches[0]);
+      const allLines = text.split(/\r?\n/);
+      const startLine = this.toToolLine(arguments_.startLine, 1);
+      const endLine = Math.min(this.toToolLine(arguments_.endLine, startLine + 239), startLine + 239);
+      const content = allLines.slice(startLine - 1, endLine).join('\n');
+      return JSON.stringify({ path, startLine, endLine, content });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown file read error.';
+      return JSON.stringify({ error: `Could not read ${path}: ${message}` });
+    }
   }
 
   async buildPromptWithImplicitContext(prompt: string, options: ContextBuildOptions): Promise<string> {
     const intent = this.classifyPromptIntent(prompt);
+    this.outputChannel.appendLine(`[Context] Building context; intent=${intent}, prompt length=${prompt.length}.`);
     const plan = await this.resolveContextPlan(prompt, intent, options);
+    this.outputChannel.appendLine(`[Context] Context plan selected: scope=${plan.scope}${plan.paths?.length ? `, paths=${plan.paths.length}` : ''}.`);
 
     if (plan.scope === 'none') {
       return prompt;
     }
 
-    const contextBlock = await this.buildContextBlock(plan, options.token);
+    const contextBlock = await this.buildContextBlock(plan, options.token, options.maxTotalChars);
     if (!contextBlock) {
+      this.outputChannel.appendLine('[Context] No context block was assembled.');
       return prompt;
     }
+
+    this.outputChannel.appendLine(`[Context] Context block assembled; length=${contextBlock.length}.`);
 
     return [
       prompt,
@@ -186,17 +210,17 @@ export class ContextManager {
     return { scope: 'none', reason: 'Selector returned an invalid scope.' };
   }
 
-  private async buildContextBlock(plan: ContextPlan, token?: vscode.CancellationToken): Promise<string | undefined> {
+  private async buildContextBlock(plan: ContextPlan, token?: vscode.CancellationToken, maxTotalChars = MAX_PROJECT_TOTAL_CHARS): Promise<string | undefined> {
     if (plan.scope === 'activeFile') {
       return this.buildActiveFileContext();
     }
 
     if (plan.scope === 'project') {
-      return this.buildProjectContext(undefined, token);
+      return this.buildProjectContext(undefined, token, maxTotalChars);
     }
 
     if (plan.scope === 'paths' && plan.paths && plan.paths.length > 0) {
-      return this.buildProjectContext(plan.paths, token);
+      return this.buildProjectContext(plan.paths, token, maxTotalChars);
     }
 
     return undefined;
@@ -223,13 +247,13 @@ export class ContextManager {
     ].join('\n');
   }
 
-  private async buildProjectContext(paths: string[] | undefined, token?: vscode.CancellationToken): Promise<string | undefined> {
+  private async buildProjectContext(paths: string[] | undefined, token?: vscode.CancellationToken, maxTotalChars = MAX_PROJECT_TOTAL_CHARS): Promise<string | undefined> {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) {
       return undefined;
     }
 
-    const cacheKey = this.createCacheKey(paths);
+    const cacheKey = this.createCacheKey(paths, maxTotalChars);
     if (!this.hasDirtyOpenDocuments() && this.cache.has(cacheKey)) {
       const cached = this.cache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now()) {
@@ -252,7 +276,7 @@ export class ContextManager {
             return undefined;
           }
 
-          const entry = await this.readContextEntry(uri, totalChars);
+          const entry = await this.readContextEntry(uri, totalChars, maxTotalChars);
           if (!entry) {
             continue;
           }
@@ -261,7 +285,7 @@ export class ContextManager {
           totalChars += entry.content.length;
           progress.report({ message: `${selected.length} file(s) staged` });
 
-          if (selected.length >= MAX_PROJECT_FILES || totalChars >= MAX_PROJECT_TOTAL_CHARS) {
+          if (selected.length >= MAX_PROJECT_FILES || totalChars >= maxTotalChars) {
             break;
           }
         }
@@ -327,7 +351,7 @@ export class ContextManager {
     return resolved;
   }
 
-  private async readContextEntry(uri: vscode.Uri, totalChars: number): Promise<{ path: string; content: string } | undefined> {
+  private async readContextEntry(uri: vscode.Uri, totalChars: number, maxTotalChars: number): Promise<{ path: string; content: string } | undefined> {
     try {
       const text = await this.readDocumentText(uri);
       if (text.includes('\u0000')) {
@@ -335,7 +359,7 @@ export class ContextManager {
       }
 
       const relativePath = vscode.workspace.asRelativePath(uri, false);
-      const remainingChars = MAX_PROJECT_TOTAL_CHARS - totalChars;
+      const remainingChars = maxTotalChars - totalChars;
       if (remainingChars <= 0) {
         return undefined;
       }
@@ -392,6 +416,19 @@ export class ContextManager {
     return uri.scheme === 'file' && TEXT_FILE_EXTENSIONS.has(this.getFileExtension(uri.fsPath));
   }
 
+  private isSafeToolPath(path: string): boolean {
+    const segments = path.split('/');
+    return !path.startsWith('/')
+      && !segments.includes('..')
+      && !segments.some((segment) => PROTECTED_PATH_SEGMENTS.has(segment))
+      && !/[\*?\[\]{}]/.test(path)
+      && this.isLikelyTextSourceFile(vscode.Uri.file(path));
+  }
+
+  private toToolLine(value: unknown, fallback: number): number {
+    return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
+  }
+
   private scoreCandidate(uri: vscode.Uri, activeFilePath: string | undefined): number {
     const relativePath = vscode.workspace.asRelativePath(uri, false);
     if (!activeFilePath) {
@@ -434,13 +471,13 @@ export class ContextManager {
     return !editor.document.isUntitled && editor.document.uri.scheme === 'file';
   }
 
-  private createCacheKey(paths: string[] | undefined): string {
+  private createCacheKey(paths: string[] | undefined, maxTotalChars: number): string {
     const folders = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.toString()).join('|') ?? 'no-workspace';
     if (!paths || paths.length === 0) {
-      return `${folders}:project:all`;
+      return `${folders}:project:all:${maxTotalChars}`;
     }
 
-    return `${folders}:project:${paths.slice().sort().join('|')}`;
+    return `${folders}:project:${paths.slice().sort().join('|')}:${maxTotalChars}`;
   }
 
   private hasDirtyOpenDocuments(): boolean {

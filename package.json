@@ -2,7 +2,7 @@
   "name": "local-ollama-chat",
   "displayName": "Local Ollama Chat",
   "description": "Connect VS Code chat to a local Ollama instance and choose from your local models.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "local-ollama",
   "private": true,
   "engines": {
@@ -41,6 +41,10 @@
       {
         "command": "localOllama.updateFromWorkspace",
         "title": "Local Ollama: Update From Workspace"
+      },
+      {
+        "command": "localOllama.openActivityLog",
+        "title": "Local Ollama: Open Activity Log"
       }
     ],
     "configuration": {

@@ -3,14 +3,25 @@ export type OllamaTagResponse = {
 };
 
 export type OllamaChatResponse = {
-  message?: { content?: string };
+  message?: {
+    content?: string;
+    tool_calls?: OllamaToolCall[];
+  };
   error?: string;
   done?: boolean;
 };
 
 export type OllamaMessage = {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  tool_calls?: OllamaToolCall[];
+};
+
+export type OllamaToolCall = {
+  function: {
+    name: string;
+    arguments: Record<string, unknown>;
+  };
 };
 
 export type ProposedFileEdit = {

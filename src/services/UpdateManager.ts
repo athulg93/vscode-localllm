@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { Logger } from '../core/contracts';
 
 const execFileAsync = promisify(execFile);
 
@@ -18,7 +19,7 @@ type NpmInvocation = {
 };
 
 export class UpdateManager {
-  constructor(private readonly outputChannel: vscode.OutputChannel) {}
+  constructor(private readonly outputChannel: Logger) {}
 
   async updateFromWorkspace(options: UpdateWorkspaceOptions): Promise<void> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
