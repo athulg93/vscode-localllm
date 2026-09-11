@@ -26,6 +26,8 @@ export type ToolDefinition = {
 
 export type ResponseFormat = 'json' | Record<string, unknown>;
 
+export type ProviderStatus = (message: string) => void;
+
 export type ModelProvider = {
   listModels(): Promise<string[]>;
   ensureModelExists(model: string): Promise<string>;
@@ -33,12 +35,14 @@ export type ModelProvider = {
     systemPrompt?: string;
     token?: CancellationLike;
     responseFormat?: ResponseFormat;
+    onStatus?: ProviderStatus;
   }): Promise<string>;
   streamPrompt(model: string, prompt: string, temperature: number, options: {
     systemPrompt?: string;
     token?: CancellationLike;
     onToken: (chunk: string) => void;
     responseFormat?: ResponseFormat;
+    onStatus?: ProviderStatus;
   }): Promise<string>;
   sendPromptWithTools(model: string, prompt: string, temperature: number, options: {
     systemPrompt?: string;
@@ -47,5 +51,6 @@ export type ModelProvider = {
     executeTool: (name: string, arguments_: Record<string, unknown>) => Promise<string>;
     maxToolCalls?: number;
     responseFormat?: ResponseFormat;
+    onStatus?: ProviderStatus;
   }): Promise<string>;
 };

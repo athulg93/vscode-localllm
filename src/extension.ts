@@ -216,7 +216,7 @@ function registerChatParticipant(
 
     try {
       const resolvedModel = await client.ensureModelExists(defaultModel);
-      stream.progress('Calling your local Ollama model...');
+      stream.progress(`Connected to Ollama. Model ${resolvedModel} is available.`);
 
       if (token.isCancellationRequested) {
         return;
@@ -245,6 +245,7 @@ function registerChatParticipant(
       });
       const response = await client.streamPrompt(resolvedModel, promptWithContext, temperature, {
         token,
+        onStatus: (message) => stream.progress(message),
         onToken: (chunk) => {
           stream.markdown(chunk);
         },

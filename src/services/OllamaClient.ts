@@ -2,12 +2,13 @@
 
 import { HUMAN_READABLE_SYSTEM_PROMPT, OLLAMA_REQUEST_TIMEOUT_MS } from '../constants';
 import { OllamaChatResponse, OllamaMessage, OllamaTagResponse, OllamaToolCall } from '../types';
-import { CancellationLike, Logger, ModelProvider, ResponseFormat, ToolDefinition } from '../core/contracts';
+import { CancellationLike, Logger, ModelProvider, ProviderStatus, ResponseFormat, ToolDefinition } from '../core/contracts';
 
 type PromptOptions = {
   systemPrompt?: string;
   token?: CancellationLike;
   responseFormat?: ResponseFormat;
+  onStatus?: ProviderStatus;
 };
 
 type StreamPromptOptions = PromptOptions & {
@@ -68,11 +69,13 @@ export class OllamaClient implements ModelProvider {
 
   async sendPrompt(model: string, prompt: string, temperature: number, options: PromptOptions = {}): Promise<string> {
     this.outputChannel.appendLine(`[Ollama] Sending non-stream request with model ${model}; prompt length ${prompt.length}.`);
+    options.onStatus?.(`Sending request to ${model}...`);
     const response = await this.fetchChat(model, temperature, {
       stream: false,
       messages: this.buildMessages(prompt, options.systemPrompt),
       token: options.token,
       responseFormat: options.responseFormat,
+      onStatus: options.onStatus,
     });
 
     const data = (await response.json()) as OllamaChatResponse;
@@ -91,12 +94,14 @@ export class OllamaClient implements ModelProvider {
 
     while (true) {
       this.outputChannel.appendLine(`[Ollama] Sending tool request with model ${model}; prompt length ${prompt.length}; tool calls used ${toolCallCount}.`);
+      options.onStatus?.(toolCallCount === 0 ? 'Inspecting the request and deciding what context is needed...' : 'Preparing the structured edit plan...');
       const response = await this.fetchChat(model, temperature, {
         stream: false,
         messages,
         tools: useTools ? this.toOllamaTools(options.tools) : undefined,
         token: options.token,
         responseFormat: toolCallCount > 0 ? options.responseFormat : undefined,
+        onStatus: options.onStatus,
       });
       const data = (await response.json()) as OllamaChatResponse;
       if (data.error) {
@@ -124,6 +129,7 @@ export class OllamaClient implements ModelProvider {
         }
 
         const name = toolCall.function?.name ?? '';
+        options.onStatus?.(`Reading workspace context${toolCallCount > 1 ? ` (${toolCallCount}/${maxToolCalls})` : ''}...`);
         const toolResult = await options.executeTool(name, toolCall.function?.arguments ?? {});
         if (nativeToolCalls.length > 0) {
           messages.push({ role: 'tool', content: toolResult });
@@ -140,11 +146,13 @@ export class OllamaClient implements ModelProvider {
 
   async streamPrompt(model: string, prompt: string, temperature: number, options: StreamPromptOptions): Promise<string> {
     this.outputChannel.appendLine(`[Ollama] Sending stream request with model ${model}; prompt length ${prompt.length}.`);
+    options.onStatus?.(`Generating a response with ${model}...`);
     const response = await this.fetchChat(model, temperature, {
       stream: true,
       messages: this.buildMessages(prompt, options.systemPrompt),
       token: options.token,
       responseFormat: options.responseFormat,
+      onStatus: options.onStatus,
     });
 
     if (!response.body) {
@@ -189,6 +197,9 @@ export class OllamaClient implements ModelProvider {
           }
 
           fullText += piece;
+          if (fullText.length === piece.length) {
+            options.onStatus?.('Response started.');
+          }
           options.onToken(piece);
         }
       }
@@ -255,11 +266,18 @@ export class OllamaClient implements ModelProvider {
       tools?: OllamaTool[];
       token?: CancellationLike;
       responseFormat?: ResponseFormat;
+      onStatus?: ProviderStatus;
     },
   ): Promise<Response> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), OLLAMA_REQUEST_TIMEOUT_MS);
     const subscription = options.token?.onCancellationRequested(() => controller.abort());
+    const startedAt = Date.now();
+    const progressTimer = setInterval(() => {
+      const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+      options.onStatus?.(`Still waiting for Ollama (${elapsedSeconds}s). The model may be loading...`);
+    }, 15_000);
+    options.onStatus?.('Connecting to the local Ollama server...');
 
     try {
       const response = await fetch(`${this.baseUrl}/api/chat`, {
@@ -286,7 +304,11 @@ export class OllamaClient implements ModelProvider {
       if (controller.signal.aborted) {
         const reason = options.token?.isCancellationRequested ? 'cancelled by user' : `timed out after ${OLLAMA_REQUEST_TIMEOUT_MS / 1000} seconds`;
         this.outputChannel.appendLine(`[Ollama] Request aborted: ${reason}.`);
-        throw new Error(`Ollama request ${reason}. The prompt may be too large or the model may still be loading.`);
+        if (options.token?.isCancellationRequested) {
+          throw new Error('The request was cancelled.');
+        }
+
+        throw new Error(`Ollama did not respond within ${OLLAMA_REQUEST_TIMEOUT_MS / 60_000} minutes. The model may still be loading, or the prompt may be too large. You can try again, choose a smaller model, or reduce the amount of workspace context.`);
       }
 
       const details = error instanceof Error ? error.message : String(error);
@@ -298,6 +320,7 @@ export class OllamaClient implements ModelProvider {
       throw error;
     } finally {
       clearTimeout(timeout);
+      clearInterval(progressTimer);
       subscription?.dispose();
     }
   }

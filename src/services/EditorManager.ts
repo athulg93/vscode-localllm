@@ -140,6 +140,7 @@ export class EditorManager {
       tools: options.contextManager.getFileTools(),
       executeTool: (name, arguments_) => options.contextManager.executeFileTool(name, arguments_),
       responseFormat: EDIT_PLAN_RESPONSE_SCHEMA,
+      onStatus: (message) => options.stream.progress(message),
     });
 
     try {
@@ -164,6 +165,7 @@ export class EditorManager {
           systemPrompt: EDIT_PLAN_SYSTEM_PROMPT,
           token: options.token,
           responseFormat: EDIT_PLAN_RESPONSE_SCHEMA,
+          onStatus: (message) => options.stream.progress(message),
         },
       );
 
