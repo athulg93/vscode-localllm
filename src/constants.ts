@@ -12,6 +12,12 @@ export const MAX_TARGETED_CONTEXT_FILES = 12;
 export const MAX_EDIT_FILES = 10;
 export const MAX_APPLY_FILE_CHARS = 40_000;
 export const CONTEXT_CACHE_TTL_MS = 60_000;
+export const MAX_TOOL_RESULTS = 40;
+export const MAX_TOOL_SEARCH_MATCHES = 40;
+export const MAX_TOOL_SEARCH_FILE_CHARS = 20_000;
+export const DEFAULT_MAX_TOOL_CALLS = 16;
+export const MAX_ALLOWED_TOOL_CALLS = 40;
+export const GITHUB_RELEASES_API = 'https://api.github.com/repos/athulg93/vscode-localllm/releases/latest';
 
 export const PROJECT_EXCLUDE_GLOB = '**/{node_modules,.git,dist,out,build,.next,.turbo,.cache}/**';
 

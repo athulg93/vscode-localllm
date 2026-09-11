@@ -100,7 +100,7 @@ export class OllamaClient implements ModelProvider {
         messages,
         tools: useTools ? this.toOllamaTools(options.tools) : undefined,
         token: options.token,
-        responseFormat: toolCallCount > 0 ? options.responseFormat : undefined,
+        responseFormat: undefined,
         onStatus: options.onStatus,
       });
       const data = (await response.json()) as OllamaChatResponse;
@@ -125,7 +125,7 @@ export class OllamaClient implements ModelProvider {
       for (const toolCall of toolCalls) {
         toolCallCount += 1;
         if (toolCallCount > maxToolCalls) {
-          throw new Error(`Ollama requested more than ${maxToolCalls} file operations while planning the edit.`);
+          throw new Error(`Ollama requested more than ${maxToolCalls} workspace operations in one request.`);
         }
 
         const name = toolCall.function?.name ?? '';
@@ -138,7 +138,7 @@ export class OllamaClient implements ModelProvider {
             role: 'user',
             content: `FILE TOOL RESULT:\n${toolResult}\n\nUse this result to answer the original request. Do not call a tool.`,
           });
-          useTools = false;
+          useTools = true;
         }
       }
     }
@@ -240,8 +240,23 @@ export class OllamaClient implements ModelProvider {
       return [];
     }
 
+    const normalized = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    const candidates: unknown[] = [];
     try {
-      const parsed = JSON.parse(content) as { name?: unknown; arguments?: unknown };
+      const parsed = JSON.parse(normalized) as unknown;
+      candidates.push(...(Array.isArray(parsed) ? parsed : [parsed]));
+    } catch {
+      for (const line of normalized.split(/\r?\n/)) {
+        try {
+          candidates.push(JSON.parse(line.trim()) as unknown);
+        } catch {
+          continue;
+        }
+      }
+    }
+
+    return candidates.flatMap((candidate) => {
+      const parsed = candidate as { name?: unknown; arguments?: unknown };
       if (typeof parsed.name !== 'string' || !parsed.name || !parsed.arguments || typeof parsed.arguments !== 'object' || Array.isArray(parsed.arguments)) {
         return [];
       }
@@ -252,9 +267,7 @@ export class OllamaClient implements ModelProvider {
           arguments: parsed.arguments as Record<string, unknown>,
         },
       }];
-    } catch {
-      return [];
-    }
+    });
   }
 
   private async fetchChat(

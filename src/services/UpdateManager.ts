@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { GITHUB_RELEASES_API } from '../constants';
 import { Logger } from '../core/contracts';
 
 const execFileAsync = promisify(execFile);
@@ -18,8 +19,76 @@ type NpmInvocation = {
   prefixArgs: string[];
 };
 
+type GitHubRelease = {
+  tag_name?: string;
+  name?: string;
+  html_url?: string;
+  assets?: Array<{ name?: string; browser_download_url?: string; size?: number }>;
+};
+
 export class UpdateManager {
-  constructor(private readonly outputChannel: Logger) {}
+  constructor(
+    private readonly outputChannel: Logger,
+    private readonly storageUri: vscode.Uri,
+  ) {}
+
+  async updateFromRelease(currentVersion: string): Promise<void> {
+    const release = await this.getLatestRelease();
+    const releaseVersion = this.normalizeVersion(release.tag_name ?? release.name ?? '');
+    if (!releaseVersion || !this.isNewerVersion(releaseVersion, currentVersion)) {
+      vscode.window.showInformationMessage(`Local Ollama is already up to date (${currentVersion}).`);
+      return;
+    }
+
+    const asset = release.assets?.find((candidate) => candidate.name?.toLowerCase().endsWith('.vsix') && candidate.browser_download_url);
+    if (!asset?.browser_download_url || !asset.name) {
+      throw new Error(`Release ${releaseVersion} does not contain a downloadable VSIX file.`);
+    }
+
+    const choice = await vscode.window.showInformationMessage(
+      `Local Ollama ${releaseVersion} is available. Download and install it now?`,
+      'Install Update',
+      'Cancel',
+    );
+    if (choice !== 'Install Update') {
+      return;
+    }
+
+    const downloadUrl = asset.browser_download_url;
+    const targetUri = vscode.Uri.joinPath(this.getStorageUri(), asset.name);
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'Updating Local Ollama...' },
+      async (progress) => {
+        progress.report({ message: `Downloading ${asset.name}...` });
+        const response = await fetch(downloadUrl, {
+          headers: { Accept: 'application/octet-stream', 'User-Agent': 'local-ollama-chat' },
+        });
+        if (!response.ok) {
+          throw new Error(`GitHub returned ${response.status} ${response.statusText} while downloading the update.`);
+        }
+
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (bytes.length < 100 || !this.isZip(bytes)) {
+          throw new Error('The downloaded update was not a valid VSIX archive.');
+        }
+
+        await vscode.workspace.fs.createDirectory(this.getStorageUri());
+        await vscode.workspace.fs.writeFile(targetUri, bytes);
+        progress.report({ message: 'Installing update...' });
+        await vscode.commands.executeCommand('workbench.extensions.installExtension', targetUri);
+      },
+    );
+
+    this.outputChannel.appendLine(`[Update] Installed GitHub release ${releaseVersion} from ${release.html_url ?? GITHUB_RELEASES_API}.`);
+    const choiceAfterInstall = await vscode.window.showInformationMessage(
+      `Local Ollama was updated to ${releaseVersion}. Reload the window to activate it.`,
+      'Reload Window',
+      'Later',
+    );
+    if (choiceAfterInstall === 'Reload Window') {
+      await vscode.commands.executeCommand('workbench.action.reloadWindow');
+    }
+  }
 
   async updateFromWorkspace(options: UpdateWorkspaceOptions): Promise<void> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -73,6 +142,52 @@ export class UpdateManager {
     if (choice === 'Reload Window') {
       await vscode.commands.executeCommand('workbench.action.reloadWindow');
     }
+  }
+
+  private async getLatestRelease(): Promise<GitHubRelease> {
+    const response = await fetch(GITHUB_RELEASES_API, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'local-ollama-chat' },
+    });
+    if (!response.ok) {
+      throw new Error(`Could not check GitHub Releases (${response.status} ${response.statusText}).`);
+    }
+
+    return (await response.json()) as GitHubRelease;
+  }
+
+  private getStorageUri(): vscode.Uri {
+    return vscode.Uri.joinPath(this.storageUri, 'update-cache');
+  }
+
+  private normalizeVersion(value: string): string | undefined {
+    const match = value.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
+    return match ? `${match[1]}.${match[2]}.${match[3]}` : undefined;
+  }
+
+  private isNewerVersion(candidate: string, current: string): boolean {
+    const next = this.normalizeVersion(candidate);
+    const installed = this.normalizeVersion(current);
+    if (!next || !installed) {
+      return false;
+    }
+
+    const nextParts = next.split('.').map(Number);
+    const installedParts = installed.split('.').map(Number);
+    for (let index = 0; index < nextParts.length; index += 1) {
+      if (nextParts[index] > installedParts[index]) {
+        return true;
+      }
+
+      if (nextParts[index] < installedParts[index]) {
+        return false;
+      }
+    }
+
+    return false;
+  }
+
+  private isZip(bytes: Uint8Array): boolean {
+    return bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
   }
 
   private async runCommand(command: string, args: string[], cwd: string): Promise<void> {

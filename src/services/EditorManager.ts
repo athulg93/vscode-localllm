@@ -21,6 +21,7 @@ type EditWorkflowOptions = {
   temperature: number;
   stream: vscode.ChatResponseStream;
   token?: vscode.CancellationToken;
+  maxToolCalls?: number;
 };
 
 type EditCandidate = {
@@ -130,8 +131,9 @@ export class EditorManager {
     const toolPrompt = [
       options.prompt,
       '',
-      'You may use the read_file tool to inspect only the workspace-relative files needed for this request.',
-      'Do not assume you can access the filesystem directly. For an existing file, read the relevant lines before proposing an update.',
+      'Explore before editing: use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant ranges.',
+      'You may use multiple tools in sequence. Do not assume you can access the filesystem directly. For an existing file, read the relevant lines before proposing an update.',
+      'Keep exploring until you have enough evidence to make a correct change, then stop using tools and return only the JSON edit plan.',
       'For a new file, do not read a nonexistent path; return a create operation with the requested workspace-relative path.',
     ].join('\n');
     const raw = await options.client.sendPromptWithTools(options.model, toolPrompt, options.temperature, {
@@ -139,6 +141,7 @@ export class EditorManager {
       token: options.token,
       tools: options.contextManager.getFileTools(),
       executeTool: (name, arguments_) => options.contextManager.executeFileTool(name, arguments_),
+      maxToolCalls: options.maxToolCalls,
       responseFormat: EDIT_PLAN_RESPONSE_SCHEMA,
       onStatus: (message) => options.stream.progress(message),
     });

@@ -2,7 +2,7 @@
   "name": "local-ollama-chat",
   "displayName": "Local Ollama Chat",
   "description": "Connect VS Code chat to a local Ollama instance and choose from your local models.",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "publisher": "local-ollama",
   "private": true,
   "engines": {
@@ -43,6 +43,10 @@
         "title": "Local Ollama: Update From Workspace"
       },
       {
+        "command": "localOllama.update",
+        "title": "Local Ollama: Check for Updates"
+      },
+      {
         "command": "localOllama.openActivityLog",
         "title": "Local Ollama: Open Activity Log"
       }
@@ -71,6 +75,13 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically create missing folders for AI-proposed create/rename operations inside the workspace."
+        },
+        "localOllama.maxToolCalls": {
+          "type": "number",
+          "default": 16,
+          "minimum": 4,
+          "maximum": 40,
+          "description": "Maximum workspace exploration operations allowed for one chat request."
         }
       }
     },
@@ -96,6 +107,10 @@
           {
             "name": "refactor",
             "description": "Propose project refactor edits, then apply or discard"
+          },
+          {
+            "name": "update",
+            "description": "Check GitHub Releases for a newer extension version"
           }
         ],
         "isSticky": true

@@ -11,6 +11,7 @@ A VS Code extension that connects the built-in chat experience to a local Ollama
 - Automatically choose and inject local context for prompts like "analyze this file", "help me with this", or "review this project"
 - Cache project context for 60 seconds to avoid rescanning unchanged workspaces on repeated requests
 - Stream human-readable responses back from Ollama in chat
+- Explore the workspace through bounded multi-step tools for file discovery, search, and line-range reads
 - Propose file/project edits with preview + apply/cancel flow
 - Protect dotfiles, lockfiles, generated folders, and dirty editors from unsafe overwrite attempts
 
@@ -33,19 +34,23 @@ You can also run these commands from the Command Palette:
 - `Local Ollama: Apply Suggested Edit`
 - `Local Ollama: Refactor Project`
 - `Local Ollama: Update From Workspace`
+- `Local Ollama: Check for Updates`
 
 ## Updating
 
-- Install the new VSIX one last time manually.
-- After that, open this extension's workspace and run `Local Ollama: Update From Workspace`.
-- The command compiles the workspace, packages a fresh VSIX, installs it into the current VS Code, and offers a reload button.
-- Requirement: `node_modules` must already exist in the workspace.
+- Marketplace installations are updated by VS Code's normal extension update service.
+- Standalone VSIX installations can check GitHub Releases from the Command Palette with `Local Ollama: Check for Updates`.
+- The same updater is available in chat with `@local-ollama /update`.
+- `@local-ollama run update` is also recognized for compatibility with that phrasing.
+- The updater checks the latest release at `https://github.com/athulg93/vscode-localllm/releases`, compares versions, downloads the release VSIX, asks for confirmation, installs it, and offers to reload VS Code.
+- `Local Ollama: Update From Workspace` remains available for developers who are running the extension from its source workspace.
 
 ## Configuration
 
 - `localOllama.baseUrl`: defaults to `http://localhost:11434`
 - `localOllama.defaultModel`: defaults to `qwen2.5-coder:7b`
 - `localOllama.temperature`: defaults to `0.7`
+- `localOllama.maxToolCalls`: defaults to `16`, with a maximum of `40` workspace exploration operations per request
 
 ## Diagnostics
 

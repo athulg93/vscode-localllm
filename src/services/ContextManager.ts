@@ -9,6 +9,9 @@ import {
   MAX_PROJECT_FILES,
   MAX_PROJECT_TOTAL_CHARS,
   MAX_TARGETED_CONTEXT_FILES,
+  MAX_TOOL_RESULTS,
+  MAX_TOOL_SEARCH_FILE_CHARS,
+  MAX_TOOL_SEARCH_MATCHES,
   PROTECTED_PATH_SEGMENTS,
   PROJECT_EXCLUDE_GLOB,
   TEXT_FILE_EXTENSIONS,
@@ -46,22 +49,56 @@ export class ContextManager {
   }
 
   getFileTools(): ToolDefinition[] {
-    return [{
-      name: 'read_file',
-      description: 'Read a bounded line range from a text file in the current workspace. Use this before proposing updates to an existing file.',
-      parameters: {
-        type: 'object',
-        properties: {
-          path: { type: 'string', description: 'Workspace-relative file path.' },
-          startLine: { type: 'integer', minimum: 1, description: 'First line to read, inclusive.' },
-          endLine: { type: 'integer', minimum: 1, description: 'Last line to read, inclusive. Maximum 240 lines.' },
+    return [
+      {
+        name: 'list_workspace_files',
+        description: 'List bounded workspace-relative text-file paths. Use this to discover likely files before reading them.',
+        parameters: {
+          type: 'object',
+          properties: {
+            pathPrefix: { type: 'string', description: 'Optional workspace-relative folder or path prefix.' },
+            maxResults: { type: 'integer', minimum: 1, maximum: 40, description: 'Maximum paths to return.' },
+          },
         },
-        required: ['path'],
       },
-    }];
+      {
+        name: 'search_workspace',
+        description: 'Search bounded text files for a literal string and return matching paths and line numbers. Use this to find symbols, errors, or related code.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Literal text to search for.' },
+            pathPrefix: { type: 'string', description: 'Optional workspace-relative folder or path prefix.' },
+            maxResults: { type: 'integer', minimum: 1, maximum: 40, description: 'Maximum matches to return.' },
+          },
+          required: ['query'],
+        },
+      },
+      {
+        name: 'read_file',
+        description: 'Read a bounded line range from a text file in the current workspace. Use this before proposing updates to an existing file.',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Workspace-relative file path.' },
+            startLine: { type: 'integer', minimum: 1, description: 'First line to read, inclusive.' },
+            endLine: { type: 'integer', minimum: 1, description: 'Last line to read, inclusive. Maximum 240 lines.' },
+          },
+          required: ['path'],
+        },
+      },
+    ];
   }
 
   async executeFileTool(name: string, arguments_: Record<string, unknown>): Promise<string> {
+    if (name === 'list_workspace_files') {
+      return this.listWorkspaceFiles(arguments_);
+    }
+
+    if (name === 'search_workspace') {
+      return this.searchWorkspace(arguments_);
+    }
+
     if (name !== 'read_file') {
       return JSON.stringify({ error: `Unknown file tool: ${name}` });
     }
@@ -92,6 +129,63 @@ export class ContextManager {
       const message = error instanceof Error ? error.message : 'Unknown file read error.';
       return JSON.stringify({ error: `Could not read ${path}: ${message}` });
     }
+  }
+
+  private async listWorkspaceFiles(arguments_: Record<string, unknown>): Promise<string> {
+    const pathPrefix = this.normalizeToolPrefix(arguments_.pathPrefix);
+    if (pathPrefix === undefined) {
+      return JSON.stringify({ error: 'The pathPrefix is not allowed.' });
+    }
+
+    const maxResults = this.toToolLimit(arguments_.maxResults, MAX_TOOL_RESULTS);
+    const pattern = pathPrefix ? `${pathPrefix}/**/*` : '**/*';
+    const uris = await vscode.workspace.findFiles(pattern, PROJECT_EXCLUDE_GLOB, maxResults * 3);
+    const paths = uris
+      .filter((uri) => this.isLikelyTextSourceFile(uri))
+      .map((uri) => vscode.workspace.asRelativePath(uri, false))
+      .slice(0, maxResults);
+
+    return JSON.stringify({ pathPrefix: pathPrefix || undefined, paths });
+  }
+
+  private async searchWorkspace(arguments_: Record<string, unknown>): Promise<string> {
+    const query = typeof arguments_.query === 'string' ? arguments_.query : '';
+    const pathPrefix = this.normalizeToolPrefix(arguments_.pathPrefix);
+    if (!query.trim()) {
+      return JSON.stringify({ error: 'The search query is required.' });
+    }
+
+    if (pathPrefix === undefined) {
+      return JSON.stringify({ error: 'The pathPrefix is not allowed.' });
+    }
+
+    const maxResults = this.toToolLimit(arguments_.maxResults, MAX_TOOL_SEARCH_MATCHES);
+    const pattern = pathPrefix ? `${pathPrefix}/**/*` : '**/*';
+    const uris = await vscode.workspace.findFiles(pattern, PROJECT_EXCLUDE_GLOB, MAX_CONTEXT_CANDIDATE_FILES);
+    const matches: Array<{ path: string; line: number; text: string }> = [];
+
+    for (const uri of uris) {
+      if (!this.isLikelyTextSourceFile(uri)) {
+        continue;
+      }
+
+      const text = (await this.readDocumentText(uri)).slice(0, MAX_TOOL_SEARCH_FILE_CHARS);
+      const lines = text.split(/\r?\n/);
+      for (let index = 0; index < lines.length; index += 1) {
+        if (lines[index].toLowerCase().includes(query.toLowerCase())) {
+          matches.push({
+            path: vscode.workspace.asRelativePath(uri, false),
+            line: index + 1,
+            text: this.truncateContent(lines[index].trim(), 240),
+          });
+          if (matches.length >= maxResults) {
+            return JSON.stringify({ query, matches });
+          }
+        }
+      }
+    }
+
+    return JSON.stringify({ query, matches });
   }
 
   async buildPromptWithImplicitContext(prompt: string, options: ContextBuildOptions): Promise<string> {
@@ -444,6 +538,34 @@ export class ContextManager {
 
   private toToolLine(value: unknown, fallback: number): number {
     return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
+  }
+
+  private toToolLimit(value: unknown, fallback: number): number {
+    return typeof value === 'number' && Number.isInteger(value) && value > 0
+      ? Math.min(value, fallback)
+      : fallback;
+  }
+
+  private normalizeToolPrefix(value: unknown): string | undefined {
+    if (value === undefined) {
+      return '';
+    }
+
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+
+    const normalized = value.trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
+    if (!normalized) {
+      return '';
+    }
+
+    if (normalized.startsWith('/') || normalized.split('/').includes('..') || /[\*?\[\]{}!]/.test(normalized)) {
+      return undefined;
+    }
+
+    const segments = normalized.split('/');
+    return segments.some((segment) => PROTECTED_PATH_SEGMENTS.has(segment)) ? undefined : normalized;
   }
 
   private scoreCandidate(uri: vscode.Uri, activeFilePath: string | undefined): number {

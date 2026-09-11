@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TEMPERATURE } from './constants';
+import { DEFAULT_BASE_URL, DEFAULT_MAX_TOOL_CALLS, DEFAULT_MODEL, DEFAULT_TEMPERATURE, HUMAN_READABLE_SYSTEM_PROMPT, MAX_ALLOWED_TOOL_CALLS } from './constants';
 import { ContextManager } from './services/ContextManager';
 import { EditorManager } from './services/EditorManager';
 import { OllamaClient } from './services/OllamaClient';
@@ -118,6 +118,8 @@ function registerChatParticipant(
   context: vscode.ExtensionContext,
   contextManager: ContextManager,
   editorManager: EditorManager,
+  updateManager: UpdateManager,
+  extensionVersion: string,
   outputChannel: ActivityLogger,
 ) {
   const participant = vscode.chat.createChatParticipant('local-ollama.participant', async (request, _, stream, token) => {
@@ -125,6 +127,7 @@ function registerChatParticipant(
     const baseUrl = getSetting<string>('baseUrl', DEFAULT_BASE_URL);
     let defaultModel = getSetting<string>('defaultModel', DEFAULT_MODEL);
     const temperature = getSetting<number>('temperature', DEFAULT_TEMPERATURE);
+    const maxToolCalls = Math.min(getSetting<number>('maxToolCalls', DEFAULT_MAX_TOOL_CALLS), MAX_ALLOWED_TOOL_CALLS);
     const client = new OllamaClient(baseUrl, outputChannel);
     const { requestedModel, remainingPrompt } = parseInlineModelDirective(request.prompt);
     const effectivePrompt = requestedModel ? remainingPrompt : request.prompt;
@@ -174,6 +177,18 @@ function registerChatParticipant(
       }
     }
 
+    if (request.command === 'update' || /^(?:run\s+)?update\b/i.test(effectivePrompt)) {
+      try {
+        stream.progress('Checking for a newer Local Ollama release...');
+        await updateManager.updateFromRelease(extensionVersion);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        outputChannel.appendLine(`[Update] ${message}`);
+        stream.markdown(`I could not update Local Ollama.\n\n${message}`);
+      }
+      return;
+    }
+
     if (request.command === 'edit' || request.command === 'refactor') {
       try {
         outputChannel.appendLine(`[Chat] Explicit ${request.command} workflow requested.`);
@@ -186,6 +201,7 @@ function registerChatParticipant(
           temperature,
           stream,
           token,
+          maxToolCalls,
         });
         return;
       } catch (error) {
@@ -233,26 +249,30 @@ function registerChatParticipant(
           temperature,
           stream,
           token,
+          maxToolCalls,
         });
         return;
       }
 
-      const promptWithContext = await contextManager.buildPromptWithImplicitContext(effectivePrompt, {
-        client,
-        model: resolvedModel,
-        temperature,
+      const response = await client.sendPromptWithTools(resolvedModel, [
+        effectivePrompt,
+        '',
+        'You have bounded workspace exploration tools. Use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant line ranges.',
+        'Use multiple tool calls when needed. Do not claim to have inspected a file unless a tool result provided its content.',
+        'After gathering enough evidence, answer the user directly in concise markdown. Do not return tool-call JSON in the final answer.',
+      ].join('\n'), temperature, {
+        systemPrompt: HUMAN_READABLE_SYSTEM_PROMPT,
         token,
-      });
-      const response = await client.streamPrompt(resolvedModel, promptWithContext, temperature, {
-        token,
+        tools: contextManager.getFileTools(),
+        executeTool: (name, arguments_) => contextManager.executeFileTool(name, arguments_),
+        maxToolCalls,
         onStatus: (message) => stream.progress(message),
-        onToken: (chunk) => {
-          stream.markdown(chunk);
-        },
       });
 
       if (!response.trim()) {
         stream.markdown('No response returned from Ollama.');
+      } else {
+        stream.markdown(response);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -272,7 +292,7 @@ export function activate(context: vscode.ExtensionContext) {
   activityLogger.appendLine(`[Lifecycle] Extension activated; version=${context.extension.packageJSON.version ?? 'unknown'}; log=${activityLogger.logPath}.`);
   const contextManager = new ContextManager(activityLogger);
   const editorManager = new EditorManager(activityLogger);
-  const updateManager = new UpdateManager(activityLogger);
+  const updateManager = new UpdateManager(activityLogger, context.globalStorageUri);
   const extensionPackage = context.extension.packageJSON as { name?: string; publisher?: string; version?: string };
   const extensionId = extensionPackage.publisher && extensionPackage.name
     ? `${extensionPackage.publisher}.${extensionPackage.name}`
@@ -329,6 +349,7 @@ export function activate(context: vscode.ExtensionContext) {
     const baseUrl = getSetting<string>('baseUrl', DEFAULT_BASE_URL);
     const defaultModel = getSetting<string>('defaultModel', DEFAULT_MODEL);
     const temperature = getSetting<number>('temperature', DEFAULT_TEMPERATURE);
+    const maxToolCalls = Math.min(getSetting<number>('maxToolCalls', DEFAULT_MAX_TOOL_CALLS), MAX_ALLOWED_TOOL_CALLS);
     const client = new OllamaClient(baseUrl, activityLogger);
 
     const prompt = await vscode.window.showInputBox({
@@ -399,6 +420,16 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
+  const updateCommand = vscode.commands.registerCommand('localOllama.update', async () => {
+    try {
+      await updateManager.updateFromRelease(extensionVersion);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      outputChannel.appendLine(`[Update] ${message}`);
+      vscode.window.showErrorMessage(`Unable to update Local Ollama: ${message}`);
+    }
+  });
+
   const openActivityLogCommand = vscode.commands.registerCommand('localOllama.openActivityLog', async () => {
     await vscode.window.showTextDocument(logUri, { preview: false });
   });
@@ -411,9 +442,10 @@ export function activate(context: vscode.ExtensionContext) {
     applySuggestedEditCommand,
     refactorProjectCommand,
     updateFromWorkspaceCommand,
+    updateCommand,
     openActivityLogCommand,
   );
-  registerChatParticipant(context, contextManager, editorManager, activityLogger);
+  registerChatParticipant(context, contextManager, editorManager, updateManager, extensionVersion, activityLogger);
 }
 
 export function deactivate() {
