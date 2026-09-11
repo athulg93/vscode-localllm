@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 
 import {
+  EDIT_PLAN_RESPONSE_SCHEMA,
   EDIT_PLAN_SYSTEM_PROMPT,
   MAX_APPLY_FILE_CHARS,
   MAX_EDIT_FILES,
@@ -9,12 +10,11 @@ import {
 } from '../constants';
 import { ProposedEditsResponse, ProposedFileEdit } from '../types';
 import { ContextManager } from './ContextManager';
-import { OllamaClient } from './OllamaClient';
 import { parseEditPlan } from '../core/EditPlanParser';
-import { Logger } from '../core/contracts';
+import { Logger, ModelProvider } from '../core/contracts';
 
 type EditWorkflowOptions = {
-  client: OllamaClient;
+  client: ModelProvider;
   contextManager: ContextManager;
   model: string;
   prompt: string;
@@ -139,26 +139,39 @@ export class EditorManager {
       token: options.token,
       tools: options.contextManager.getFileTools(),
       executeTool: (name, arguments_) => options.contextManager.executeFileTool(name, arguments_),
+      responseFormat: EDIT_PLAN_RESPONSE_SCHEMA,
     });
 
     try {
       return parseEditPlan(raw);
     } catch {
-      this.outputChannel.appendLine('[Edit] Ollama returned a non-JSON edit plan; retrying with a stricter format request.');
+      this.outputChannel.appendLine('[Edit] Ollama returned invalid JSON; retrying with a repair prompt.');
+      const malformedOutput = raw.slice(0, 12_000);
       const retry = await options.client.sendPrompt(
         options.model,
-        `${toolPrompt}\n\nYour previous response could not be parsed. Return only the JSON edit plan now. Do not include markdown, explanations, or code fences.`,
+        [
+          'The previous response was not valid JSON. Fix it and return only a valid JSON edit plan.',
+          'Do not include markdown fences, explanations, or any text outside the JSON object.',
+          '',
+          'Previous response:',
+          malformedOutput,
+          '',
+          'Original request:',
+          toolPrompt,
+        ].join('\n'),
         options.temperature,
         {
           systemPrompt: EDIT_PLAN_SYSTEM_PROMPT,
           token: options.token,
+          responseFormat: EDIT_PLAN_RESPONSE_SCHEMA,
         },
       );
 
       try {
         return parseEditPlan(retry);
       } catch {
-        throw new Error('Could not parse an edit plan from Ollama after two attempts. Check the Local Ollama output channel and try a more specific request.');
+        this.outputChannel.appendLine('[Edit] Edit-plan JSON remained invalid after the repair attempt.');
+        throw new Error('I could not safely prepare that edit. Please try the request again with a little more detail.');
       }
     }
   }

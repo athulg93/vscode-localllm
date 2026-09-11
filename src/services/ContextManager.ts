@@ -2,10 +2,10 @@ import * as vscode from 'vscode';
 
 import {
   CONTEXT_CACHE_TTL_MS,
+  CONTEXT_SELECTION_RESPONSE_SCHEMA,
   CONTEXT_SELECTION_SYSTEM_PROMPT,
   MAX_CONTEXT_CANDIDATE_FILES,
   MAX_FILE_CHARS,
-  MAX_EDIT_CONTEXT_CHARS,
   MAX_PROJECT_FILES,
   MAX_PROJECT_TOTAL_CHARS,
   MAX_TARGETED_CONTEXT_FILES,
@@ -13,14 +13,12 @@ import {
   PROJECT_EXCLUDE_GLOB,
   TEXT_FILE_EXTENSIONS,
 } from '../constants';
-import { OllamaClient } from './OllamaClient';
 import { classifyPromptIntent } from '../core/PromptIntentClassifier';
-import { Logger } from '../core/contracts';
+import { Logger, ModelProvider, ToolDefinition } from '../core/contracts';
 import { ContextSelectionResponse, PromptIntent } from '../types';
-import { OllamaTool } from './OllamaClient';
 
 type ContextBuildOptions = {
-  client: OllamaClient;
+  client: ModelProvider;
   model: string;
   temperature: number;
   token?: vscode.CancellationToken;
@@ -47,21 +45,18 @@ export class ContextManager {
     return classifyPromptIntent(prompt);
   }
 
-  getFileTools(): OllamaTool[] {
+  getFileTools(): ToolDefinition[] {
     return [{
-      type: 'function',
-      function: {
-        name: 'read_file',
-        description: 'Read a bounded line range from a text file in the current workspace. Use this before proposing updates to an existing file.',
-        parameters: {
-          type: 'object',
-          properties: {
-            path: { type: 'string', description: 'Workspace-relative file path.' },
-            startLine: { type: 'integer', minimum: 1, description: 'First line to read, inclusive.' },
-            endLine: { type: 'integer', minimum: 1, description: 'Last line to read, inclusive. Maximum 240 lines.' },
-          },
-          required: ['path'],
+      name: 'read_file',
+      description: 'Read a bounded line range from a text file in the current workspace. Use this before proposing updates to an existing file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Workspace-relative file path.' },
+          startLine: { type: 'integer', minimum: 1, description: 'First line to read, inclusive.' },
+          endLine: { type: 'integer', minimum: 1, description: 'Last line to read, inclusive. Maximum 240 lines.' },
         },
+        required: ['path'],
       },
     }];
   }
@@ -173,9 +168,31 @@ export class ContextManager {
       const raw = await options.client.sendPrompt(options.model, selectionPrompt, 0, {
         systemPrompt: CONTEXT_SELECTION_SYSTEM_PROMPT,
         token: options.token,
+        responseFormat: CONTEXT_SELECTION_RESPONSE_SCHEMA,
       });
 
-      const parsed = this.parseContextSelection(raw, candidatePaths);
+      let parsed: ContextSelectionResponse;
+      try {
+        parsed = this.parseContextSelection(raw, candidatePaths);
+      } catch {
+        this.outputChannel.appendLine('[Context] Ollama returned invalid context-selection JSON; retrying with a repair prompt.');
+        const repaired = await options.client.sendPrompt(options.model, [
+          'The previous response was not valid JSON. Fix it and return only a valid context-selection JSON object.',
+          'Do not include markdown fences, explanations, or any text outside the JSON object.',
+          '',
+          'Previous response:',
+          raw.slice(0, 8_000),
+          '',
+          'Original selection request:',
+          selectionPrompt,
+        ].join('\n'), 0, {
+          systemPrompt: CONTEXT_SELECTION_SYSTEM_PROMPT,
+          token: options.token,
+          responseFormat: CONTEXT_SELECTION_RESPONSE_SCHEMA,
+        });
+        parsed = this.parseContextSelection(repaired, candidatePaths);
+      }
+
       this.outputChannel.appendLine(`[Context] Dynamic selection: ${parsed.scope}${parsed.reason ? ` - ${parsed.reason}` : ''}`);
       return parsed;
     } catch (error) {

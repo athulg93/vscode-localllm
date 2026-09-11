@@ -41,6 +41,28 @@ export const EDIT_PLAN_SYSTEM_PROMPT = [
   `Return at most ${MAX_EDIT_FILES} edits.`
 ].join(' ');
 
+export const EDIT_PLAN_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: { type: 'string' },
+    edits: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          operation: { type: 'string', enum: ['create', 'update', 'delete', 'rename'] },
+          path: { type: 'string' },
+          newPath: { type: 'string' },
+          content: { type: 'string' },
+          summary: { type: 'string' },
+        },
+        required: ['operation', 'path'],
+      },
+    },
+  },
+  required: ['edits'],
+};
+
 export const CONTEXT_SELECTION_SYSTEM_PROMPT = [
   'You decide what local VS Code context is minimally required to answer a user request.',
   'Return ONLY valid JSON, no markdown fences, no prose.',
@@ -50,6 +72,16 @@ export const CONTEXT_SELECTION_SYSTEM_PROMPT = [
   'Only choose paths from the supplied candidate file list.',
   'If the request references the current file implicitly, choose "activeFile".'
 ].join(' ');
+
+export const CONTEXT_SELECTION_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    scope: { type: 'string', enum: ['none', 'activeFile', 'project', 'paths'] },
+    paths: { type: 'array', items: { type: 'string' } },
+    reason: { type: 'string' },
+  },
+  required: ['scope'],
+};
 
 export const PROTECTED_PATH_SEGMENTS = new Set([
   '.git', '.github', '.vscode', '.idea', 'node_modules', 'dist', 'build', 'out'

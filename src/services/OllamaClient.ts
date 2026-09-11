@@ -1,21 +1,20 @@
 /// <reference lib="dom" />
 
-import * as vscode from 'vscode';
-
 import { HUMAN_READABLE_SYSTEM_PROMPT, OLLAMA_REQUEST_TIMEOUT_MS } from '../constants';
 import { OllamaChatResponse, OllamaMessage, OllamaTagResponse, OllamaToolCall } from '../types';
-import { Logger } from '../core/contracts';
+import { CancellationLike, Logger, ModelProvider, ResponseFormat, ToolDefinition } from '../core/contracts';
 
 type PromptOptions = {
   systemPrompt?: string;
-  token?: vscode.CancellationToken;
+  token?: CancellationLike;
+  responseFormat?: ResponseFormat;
 };
 
 type StreamPromptOptions = PromptOptions & {
   onToken: (chunk: string) => void;
 };
 
-export type OllamaTool = {
+type OllamaTool = {
   type: 'function';
   function: {
     name: string;
@@ -25,12 +24,12 @@ export type OllamaTool = {
 };
 
 type ToolPromptOptions = PromptOptions & {
-  tools: OllamaTool[];
   executeTool: (name: string, arguments_: Record<string, unknown>) => Promise<string>;
   maxToolCalls?: number;
+  tools: ToolDefinition[];
 };
 
-export class OllamaClient {
+export class OllamaClient implements ModelProvider {
   constructor(
     private readonly baseUrl: string,
     private readonly outputChannel: Logger,
@@ -73,6 +72,7 @@ export class OllamaClient {
       stream: false,
       messages: this.buildMessages(prompt, options.systemPrompt),
       token: options.token,
+      responseFormat: options.responseFormat,
     });
 
     const data = (await response.json()) as OllamaChatResponse;
@@ -87,14 +87,16 @@ export class OllamaClient {
     const messages: OllamaMessage[] = this.buildMessages(prompt, options.systemPrompt);
     const maxToolCalls = options.maxToolCalls ?? 8;
     let toolCallCount = 0;
+    let useTools = true;
 
     while (true) {
       this.outputChannel.appendLine(`[Ollama] Sending tool request with model ${model}; prompt length ${prompt.length}; tool calls used ${toolCallCount}.`);
       const response = await this.fetchChat(model, temperature, {
         stream: false,
         messages,
-        tools: options.tools,
+        tools: useTools ? this.toOllamaTools(options.tools) : undefined,
         token: options.token,
+        responseFormat: toolCallCount > 0 ? options.responseFormat : undefined,
       });
       const data = (await response.json()) as OllamaChatResponse;
       if (data.error) {
@@ -102,7 +104,9 @@ export class OllamaClient {
       }
 
       const message = data.message;
-      const toolCalls = message?.tool_calls ?? this.parseTextToolCall(message?.content);
+      const nativeToolCalls = message?.tool_calls ?? [];
+      const textToolCalls = nativeToolCalls.length === 0 ? this.parseTextToolCall(message?.content) : [];
+      const toolCalls = nativeToolCalls.length > 0 ? nativeToolCalls : textToolCalls;
       if (toolCalls.length === 0) {
         return message?.content ?? 'No response returned from Ollama.';
       }
@@ -110,7 +114,7 @@ export class OllamaClient {
       messages.push({
         role: 'assistant',
         content: message?.content ?? '',
-        tool_calls: toolCalls,
+        ...(nativeToolCalls.length > 0 ? { tool_calls: nativeToolCalls } : {}),
       });
 
       for (const toolCall of toolCalls) {
@@ -121,7 +125,15 @@ export class OllamaClient {
 
         const name = toolCall.function?.name ?? '';
         const toolResult = await options.executeTool(name, toolCall.function?.arguments ?? {});
-        messages.push({ role: 'tool', content: toolResult });
+        if (nativeToolCalls.length > 0) {
+          messages.push({ role: 'tool', content: toolResult });
+        } else {
+          messages.push({
+            role: 'user',
+            content: `FILE TOOL RESULT:\n${toolResult}\n\nUse this result to answer the original request. Do not call a tool.`,
+          });
+          useTools = false;
+        }
       }
     }
   }
@@ -132,6 +144,7 @@ export class OllamaClient {
       stream: true,
       messages: this.buildMessages(prompt, options.systemPrompt),
       token: options.token,
+      responseFormat: options.responseFormat,
     });
 
     if (!response.body) {
@@ -236,7 +249,13 @@ export class OllamaClient {
   private async fetchChat(
     model: string,
     temperature: number,
-    options: { stream: boolean; messages: OllamaMessage[]; tools?: OllamaTool[]; token?: vscode.CancellationToken },
+    options: {
+      stream: boolean;
+      messages: OllamaMessage[];
+      tools?: OllamaTool[];
+      token?: CancellationLike;
+      responseFormat?: ResponseFormat;
+    },
   ): Promise<Response> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), OLLAMA_REQUEST_TIMEOUT_MS);
@@ -252,6 +271,7 @@ export class OllamaClient {
           options: { temperature },
           messages: options.messages,
           ...(options.tools ? { tools: options.tools } : {}),
+          ...(options.responseFormat ? { format: options.responseFormat } : {}),
         }),
         signal: controller.signal,
       });
@@ -280,6 +300,17 @@ export class OllamaClient {
       clearTimeout(timeout);
       subscription?.dispose();
     }
+  }
+
+  private toOllamaTools(tools: ToolDefinition[]): OllamaTool[] {
+    return tools.map((tool) => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
+    }));
   }
 
   private consumeStreamBuffer(buffer: string, flush = false): { chunks: OllamaChatResponse[]; remaining: string } {

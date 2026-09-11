@@ -5,6 +5,7 @@ import { EditorManager } from './services/EditorManager';
 import { OllamaClient } from './services/OllamaClient';
 import { UpdateManager } from './services/UpdateManager';
 import { ActivityLogger } from './services/ActivityLogger';
+import { ModelProvider } from './core/contracts';
 
 function getSetting<T>(section: string, fallback: T): T {
   const value = vscode.workspace.getConfiguration('localOllama').get<T>(section, fallback);
@@ -73,7 +74,7 @@ function parseInlineModelDirective(prompt: string): { requestedModel?: string; r
   return { requestedModel, remainingPrompt: remainingPrompt?.trim() ?? '' };
 }
 
-async function resolveModelName(client: OllamaClient, requestedModel: string): Promise<string> {
+async function resolveModelName(client: ModelProvider, requestedModel: string): Promise<string> {
   const models = await client.listModels();
   const exact = models.find((model) => model === requestedModel);
   if (exact) {

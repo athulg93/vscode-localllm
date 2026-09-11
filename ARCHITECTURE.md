@@ -8,7 +8,7 @@ The project is organized around a platform-neutral core and host-specific adapte
 
 - `PromptIntentClassifier.ts` classifies requests such as analysis, editing, and project operations.
 - `EditPlanParser.ts` parses the structured edit plan returned by a model.
-- `contracts.ts` defines logger, model-provider, chat-message, and cancellation contracts.
+- `contracts.ts` defines logger, provider-neutral model, tool, chat-message, and cancellation contracts.
 
 Core modules do not import VS Code, Ollama, Node.js, or any IDE API.
 
@@ -26,5 +26,7 @@ The current host and provider implementations are retained while the migration p
 ## Future adapters
 
 A new provider adapter should implement the model-provider contract and translate its native API into the shared chat and streaming shapes. A new IDE adapter should provide context, editor, settings, logging, and update implementations without changing `src/core/`.
+
+The provider contract includes a tool loop. The core and host expose generic tool definitions such as `read_file`; each provider adapter translates those definitions and its tool-call response format into the provider's native protocol. This keeps file access owned by the host while allowing providers such as Ollama, AnythingLLM, or an OpenAI-compatible service to participate.
 
 The current refactor is intentionally incremental: the existing VS Code/Ollama extension remains usable while pure logic and contracts are extracted for other hosts and local LLM providers.
