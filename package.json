@@ -2,8 +2,13 @@
   "name": "local-ollama-chat",
   "displayName": "Local Ollama Chat",
   "description": "Connect VS Code chat to a local Ollama instance and choose from your local models.",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "publisher": "local-ollama",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/athulg93/vscode-localllm.git"
+  },
   "private": true,
   "engines": {
     "vscode": "^1.96.0"
@@ -25,6 +30,10 @@
       {
         "command": "localOllama.selectModel",
         "title": "Local Ollama: Select Model"
+      },
+      {
+        "command": "localOllama.changeModel",
+        "title": "Local Ollama: Change Model"
       },
       {
         "command": "localOllama.listModels",
@@ -101,6 +110,10 @@
             "description": "Configure base URL and default model"
           },
           {
+            "name": "change-model",
+            "description": "List local models and change the active default model"
+          },
+          {
             "name": "edit",
             "description": "Propose file edits, then apply or discard"
           },
@@ -120,12 +133,18 @@
   "scripts": {
     "compile": "tsc -p tsconfig.json",
     "package": "vsce package",
+    "test": "tsx --test src/core/**/*.test.ts",
+    "lint": "eslint .",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.14.1",
     "@types/vscode": "^1.96.0",
     "@vscode/vsce": "^3.9.2",
-    "typescript": "^5.8.3"
+    "eslint": "^10.10.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.70.0"
   }
 }

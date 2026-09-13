@@ -1,5 +1,5 @@
 export const DEFAULT_BASE_URL = 'http://localhost:11434';
-export const DEFAULT_MODEL = 'llama3.1';
+export const DEFAULT_MODEL = 'qwen2.5-coder:7b';
 export const DEFAULT_TEMPERATURE = 0.7;
 
 export const MAX_FILE_CHARS = 12_000;

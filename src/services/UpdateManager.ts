@@ -11,7 +11,6 @@ const execFileAsync = promisify(execFile);
 
 type UpdateWorkspaceOptions = {
   extensionId: string;
-  extensionVersion: string;
 };
 
 type NpmInvocation = {
@@ -90,6 +89,13 @@ export class UpdateManager {
     }
   }
 
+  /**
+   * Compiles, packages, and installs the extension from the current VS Code
+   * workspace. This is a developer-only workflow: it shells out to `npm` and
+   * `vsce` to run arbitrary build scripts from whatever workspace happens to
+   * be open, so it requires an explicit user confirmation and validates that
+   * the workspace's package.json looks like this extension before proceeding.
+   */
   async updateFromWorkspace(options: UpdateWorkspaceOptions): Promise<void> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
@@ -102,6 +108,18 @@ export class UpdateManager {
     const lockPath = path.join(workspacePath, `.${safeExtensionId}.update.lock`);
     const npmInvocation = this.resolveNpmInvocation();
 
+    await this.assertFileExists(packagePath, 'package.json was not found in the current workspace.');
+    const workspaceVersion = await this.assertWorkspaceMatchesExtension(packagePath, options.extensionId);
+
+    const confirmation = await vscode.window.showWarningMessage(
+      `This will run "npm run compile" and package a VSIX using the workspace at ${workspacePath}, then install the result. Continue?`,
+      { modal: true },
+      'Run Update',
+    );
+    if (confirmation !== 'Run Update') {
+      return;
+    }
+
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -110,7 +128,6 @@ export class UpdateManager {
       },
       async (progress) => {
         progress.report({ message: 'Checking workspace...' });
-        await this.assertFileExists(packagePath, 'package.json was not found in the current workspace.');
         await this.assertDependenciesPresent(workspacePath);
 
         progress.report({ message: 'Compiling extension...' });
@@ -123,7 +140,7 @@ export class UpdateManager {
           workspacePath,
         );
 
-        const vsixPath = path.join(workspacePath, `local-ollama-chat-${options.extensionVersion}.vsix`);
+        const vsixPath = path.join(workspacePath, `local-ollama-chat-${workspaceVersion}.vsix`);
         await this.assertFileExists(vsixPath, `Expected VSIX was not produced at ${vsixPath}.`);
 
         progress.report({ message: 'Installing updated VSIX...' });
@@ -205,7 +222,7 @@ export class UpdateManager {
     } catch (error) {
       const details = error instanceof Error ? error.message : 'Unknown error';
       this.outputChannel.appendLine(`[Update] Command failed: ${details}`);
-      throw new Error(`Update step failed while running ${args.slice(-2).join(' ')}. Check the Local Ollama output channel.`);
+      throw new Error(`Update step failed while running ${args.slice(-2).join(' ')}. Check the Local Ollama output channel.`, { cause: error });
     }
   }
 
@@ -224,6 +241,31 @@ export class UpdateManager {
     } catch {
       throw new Error(errorMessage);
     }
+  }
+
+  /** Guards against running build commands in an unrelated workspace that happens to have a package.json. */
+  private async assertWorkspaceMatchesExtension(packagePath: string, extensionId: string): Promise<string> {
+    const expectedName = extensionId.includes('.') ? extensionId.slice(extensionId.lastIndexOf('.') + 1) : extensionId;
+
+    let parsed: { name?: string; version?: string };
+    try {
+      const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(packagePath));
+      parsed = JSON.parse(new TextDecoder().decode(bytes)) as { name?: string };
+    } catch (error) {
+      throw new Error('Could not read the workspace package.json.', { cause: error });
+    }
+
+    if (parsed.name !== expectedName) {
+      throw new Error(
+        `The open workspace's package.json name ("${parsed.name ?? 'unknown'}") does not match the running extension ("${expectedName}"). Open the Local Ollama extension source before running this command.`,
+      );
+    }
+
+    if (!parsed.version || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(parsed.version)) {
+      throw new Error(`The workspace package.json does not contain a valid extension version. Found: "${parsed.version ?? 'missing'}".`);
+    }
+
+    return parsed.version;
   }
 
   private async assertDependenciesPresent(workspacePath: string): Promise<void> {

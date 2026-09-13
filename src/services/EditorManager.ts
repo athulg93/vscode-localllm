@@ -5,13 +5,23 @@ import {
   EDIT_PLAN_SYSTEM_PROMPT,
   MAX_APPLY_FILE_CHARS,
   MAX_EDIT_FILES,
-  PROTECTED_FILE_NAMES,
-  PROTECTED_PATH_SEGMENTS,
 } from '../constants';
 import { ProposedEditsResponse, ProposedFileEdit } from '../types';
 import { ContextManager } from './ContextManager';
 import { parseEditPlan } from '../core/EditPlanParser';
+import { isProtectedPath, isSafeWorkspacePath } from '../core/PathSafety';
 import { Logger, ModelProvider } from '../core/contracts';
+
+/**
+ * The subset of `vscode.ChatResponseStream` that EditorManager actually uses.
+ * Keeping this narrow means callers (like a plain notification-based stream
+ * for command-palette workflows) can implement it directly and type-safely,
+ * without faking unused methods or casting to the full VS Code type.
+ */
+export type EditStream = {
+  markdown(value: string | vscode.MarkdownString): unknown;
+  progress(value?: string | vscode.MarkdownString): unknown;
+};
 
 type EditWorkflowOptions = {
   client: ModelProvider;
@@ -19,7 +29,7 @@ type EditWorkflowOptions = {
   model: string;
   prompt: string;
   temperature: number;
-  stream: vscode.ChatResponseStream;
+  stream: EditStream;
   token?: vscode.CancellationToken;
   maxToolCalls?: number;
 };
@@ -308,11 +318,11 @@ export class EditorManager {
 
   private async validateProposedEdit(edit: ProposedFileEdit): Promise<EditValidationResult> {
     const normalizedPath = edit.path.replace(/\\/g, '/');
-    if (!this.isSafeWorkspacePath(normalizedPath)) {
+    if (!isSafeWorkspacePath(normalizedPath)) {
       return { ok: false, reason: 'path is outside the allowed workspace rules' };
     }
 
-    if (this.isProtectedPath(normalizedPath)) {
+    if (isProtectedPath(normalizedPath)) {
       return { ok: false, reason: 'path is protected' };
     }
 
@@ -348,7 +358,7 @@ export class EditorManager {
         return { ok: false, reason: 'rename requires newPath' };
       }
 
-      if (!this.isSafeWorkspacePath(normalizedNewPath) || this.isProtectedPath(normalizedNewPath)) {
+      if (!isSafeWorkspacePath(normalizedNewPath) || isProtectedPath(normalizedNewPath)) {
         return { ok: false, reason: 'rename target path is not allowed' };
       }
 
@@ -506,31 +516,6 @@ export class EditorManager {
     }
 
     return 'plaintext';
-  }
-
-  private isSafeWorkspacePath(pathLike: string): boolean {
-    return !pathLike.startsWith('/')
-      && !pathLike.includes('..')
-      && !/[\*\?\[\]\{\}!]/.test(pathLike);
-  }
-
-  private isProtectedPath(pathLike: string): boolean {
-    const segments = pathLike.split('/').filter(Boolean);
-    const fileName = segments[segments.length - 1] ?? '';
-
-    if (fileName.startsWith('.')) {
-      return true;
-    }
-
-    if (PROTECTED_FILE_NAMES.has(fileName)) {
-      return true;
-    }
-
-    if (/^\.env(\..+)?$/.test(fileName)) {
-      return true;
-    }
-
-    return segments.some((segment) => segment.startsWith('.') || PROTECTED_PATH_SEGMENTS.has(segment));
   }
 
   private async readDiskSnapshot(uri: vscode.Uri): Promise<string> {

@@ -2,6 +2,10 @@ export type OllamaTagResponse = {
   models?: Array<{ name?: string }>;
 };
 
+export type OllamaShowResponse = {
+  capabilities?: string[];
+};
+
 export type OllamaChatResponse = {
   message?: {
     content?: string;
