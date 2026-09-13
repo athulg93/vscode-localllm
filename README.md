@@ -44,6 +44,7 @@ Local Ollama Chat connects the **VS Code Chat** experience to an **Ollama server
 - 👀 Opens previews and asks for a keep/discard decision before applying each proposed file operation
 - 📊 Reports progress while it connects, explores files, plans edits, and checks for updates
 - ⬆️ Updates standalone VSIX installations from GitHub Releases
+- 🌿 Inspects and manages the current Git repository with confirmation before mutations
 
 > **Privacy note:** All model requests and workspace context go to the Ollama server configured in the extension. The updater contacts GitHub only when you explicitly check for an extension update.
 
@@ -114,6 +115,17 @@ Use the participant directly in VS Code Chat:
 | `/update` | Checks GitHub Releases for a newer extension version. | `@local-ollama /update` |
 
 > The updater also recognizes `@local-ollama run update`.
+
+### Git operations
+
+For a workspace opened inside a Git repository, ask `@local-ollama` to inspect or manage Git:
+
+```text
+@local-ollama Check the Git status and show the latest diff.
+@local-ollama Stage the changed source files, commit them with "fix: improve validation", and push the current branch.
+```
+
+Read-only operations such as status, diff, log, and branch inspection can run automatically. Staging, committing, pushing, pulling, and switching branches always display the exact operation in a modal confirmation dialog. The Git layer does not expose arbitrary shell commands, force-push, branch creation/deletion, reset, or sensitive `.env` files.
 
 ### Switch Models Inline
 

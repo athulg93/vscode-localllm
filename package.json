@@ -3,7 +3,7 @@
   "displayName": "Local Ollama Chat",
   "description": "Connect VS Code chat to a local Ollama instance and choose from your local models.",
   "version": "1.3.0",
-  "publisher": "local-ollama",
+  "publisher": "agovind",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -1,4 +1,5 @@
 import { OllamaToolCall } from '../types';
+import { extractJsonBlock } from './EditPlanParser';
 
 /**
  * Some models emit a tool call as plain JSON text instead of using the native
@@ -16,25 +17,42 @@ export function parseTextToolCall(content: string | undefined): OllamaToolCall[]
     const parsed = JSON.parse(normalized) as unknown;
     candidates.push(...(Array.isArray(parsed) ? parsed : [parsed]));
   } catch {
-    for (const line of normalized.split(/\r?\n/)) {
-      try {
-        candidates.push(JSON.parse(line.trim()) as unknown);
-      } catch {
-        continue;
+    try {
+      const parsed = JSON.parse(extractJsonBlock(normalized)) as unknown;
+      candidates.push(...(Array.isArray(parsed) ? parsed : [parsed]));
+    } catch {
+      // Continue with line-delimited fallback parsing below.
+    }
+
+    if (candidates.length === 0) {
+      for (const line of normalized.split(/\r?\n/)) {
+        try {
+          candidates.push(JSON.parse(line.trim()) as unknown);
+        } catch {
+          continue;
+        }
       }
     }
   }
 
   return candidates.flatMap((candidate) => {
-    const parsed = candidate as { name?: unknown; arguments?: unknown };
-    if (typeof parsed.name !== 'string' || !parsed.name || !parsed.arguments || typeof parsed.arguments !== 'object' || Array.isArray(parsed.arguments)) {
+    const parsed = candidate as {
+      name?: unknown;
+      arguments?: unknown;
+      parameters?: unknown;
+      function?: { name?: unknown; arguments?: unknown; parameters?: unknown };
+    };
+    const functionShape = parsed.function;
+    const name = typeof parsed.name === 'string' ? parsed.name : functionShape?.name;
+    const arguments_ = parsed.arguments ?? parsed.parameters ?? functionShape?.arguments ?? functionShape?.parameters;
+    if (typeof name !== 'string' || !name || !arguments_ || typeof arguments_ !== 'object' || Array.isArray(arguments_)) {
       return [];
     }
 
     return [{
       function: {
-        name: parsed.name,
-        arguments: parsed.arguments as Record<string, unknown>,
+        name,
+        arguments: arguments_ as Record<string, unknown>,
       },
     }];
   });

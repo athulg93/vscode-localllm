@@ -10,6 +10,13 @@ test('parses a single JSON object tool call', () => {
   assert.deepEqual(result[0].function.arguments, { path: 'src/a.ts' });
 });
 
+test('parses a prose-wrapped tool call using parameters', () => {
+  const result = parseTextToolCall('I will inspect the repository.\n\n{"name":"git_branch","parameters":{}}');
+  assert.equal(result.length, 1);
+  assert.equal(result[0].function.name, 'git_branch');
+  assert.deepEqual(result[0].function.arguments, {});
+});
+
 test('strips markdown code fences before parsing', () => {
   const result = parseTextToolCall('```json\n{"name":"read_file","arguments":{"path":"src/a.ts"}}\n```');
   assert.equal(result.length, 1);

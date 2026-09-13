@@ -5,6 +5,7 @@ import { EditorManager, EditStream } from './services/EditorManager';
 import { OllamaClient } from './services/OllamaClient';
 import { UpdateManager } from './services/UpdateManager';
 import { ActivityLogger } from './services/ActivityLogger';
+import { GitManager } from './services/GitManager';
 import { ModelProvider } from './core/contracts';
 import { ModelBehaviorTelemetry } from './core/ModelBehaviorTelemetry';
 import { modelProfileLabel } from './core/ModelProfiles';
@@ -173,6 +174,7 @@ function registerChatParticipant(
   contextManager: ContextManager,
   editorManager: EditorManager,
   updateManager: UpdateManager,
+  gitManager: GitManager,
   extensionVersion: string,
   outputChannel: ActivityLogger,
   telemetry: ModelBehaviorTelemetry,
@@ -337,14 +339,16 @@ function registerChatParticipant(
       const response = await client.sendPromptWithTools(resolvedModel, [
         effectivePrompt,
         '',
-        'You have bounded workspace exploration tools. Use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant line ranges.',
+        'You have bounded workspace and Git tools. Use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant line ranges. Use Git tools for repository status, diffs, history, branches, checkout, staging, commits, pushes, and pulls. Never infer Git branches from workspace filenames or file contents; use git_branch. Use git_checkout to switch branches and wait for its confirmation result.',
         'Use multiple tool calls when needed. Do not claim to have inspected a file unless a tool result provided its content.',
         'After gathering enough evidence, answer the user directly in concise markdown. Do not return tool-call JSON in the final answer.',
       ].join('\n'), temperature, {
         systemPrompt: HUMAN_READABLE_SYSTEM_PROMPT,
         token,
-        tools: contextManager.getFileTools(),
-        executeTool: (name, arguments_) => contextManager.executeFileTool(name, arguments_),
+        tools: [...contextManager.getFileTools(), ...gitManager.getTools()],
+        executeTool: async (name, arguments_) => name.startsWith('git_')
+          ? gitManager.executeTool(name, arguments_)
+          : contextManager.executeFileTool(name, arguments_),
         maxToolCalls,
         onStatus: (message) => stream.progress(message),
       });
@@ -374,6 +378,7 @@ export function activate(context: vscode.ExtensionContext) {
   const contextManager = new ContextManager(activityLogger);
   const editorManager = new EditorManager(activityLogger);
   const updateManager = new UpdateManager(activityLogger, context.globalStorageUri);
+  const gitManager = new GitManager(activityLogger);
   const extensionPackage = context.extension.packageJSON as { name?: string; publisher?: string; version?: string };
   const extensionId = extensionPackage.publisher && extensionPackage.name
     ? `${extensionPackage.publisher}.${extensionPackage.name}`
@@ -532,7 +537,7 @@ export function activate(context: vscode.ExtensionContext) {
     updateCommand,
     openActivityLogCommand,
   );
-  registerChatParticipant(context, contextManager, editorManager, updateManager, extensionVersion, activityLogger, telemetry);
+  registerChatParticipant(context, contextManager, editorManager, updateManager, gitManager, extensionVersion, activityLogger, telemetry);
 }
 
 export function deactivate() {
