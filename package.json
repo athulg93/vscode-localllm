@@ -146,8 +146,8 @@
     "dev": "vite --host 0.0.0.0 --port 3000",
     "build": "vite build",
     "lint": "tsc --noEmit",
-    "compile": "tsc -p tsconfig.json",
-    "package": "vsce package",
+    "compile": "tsc -p tsconfig.extension.json",
+    "package": "vsce package --no-dependencies",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {

@@ -7,7 +7,8 @@ import {
   RotateCcw,
   Sparkles,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Download
 } from 'lucide-react';
 
 interface TitleBarProps {
@@ -123,6 +124,18 @@ export const TitleBar: React.FC<TitleBarProps> = ({
           <RotateCcw className="w-3.5 h-3.5 text-neutral-400" />
           <span className="hidden md:inline">Reset Code</span>
         </button>
+
+        {/* Download VSIX button */}
+        <a
+          id="titlebar-download-vsix-btn"
+          href="/local-ollama-chat-1.3.0.vsix"
+          download="local-ollama-chat-1.3.0.vsix"
+          title="Download the compiled VS Code extension (.vsix package)"
+          className="flex items-center gap-1.5 bg-[#007acc] hover:bg-[#0062a3] text-white px-2.5 py-1 rounded text-xs font-medium transition-colors shadow-sm ml-1"
+        >
+          <Download className="w-3.5 h-3.5" />
+          <span>Download .VSIX</span>
+        </a>
       </div>
     </header>
   );
