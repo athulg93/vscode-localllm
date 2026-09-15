@@ -29,7 +29,7 @@ export const ActivityBar: React.FC<ActivityBarProps> = ({
   }> = [
     {
       id: 'chat',
-      label: 'Local Ollama Chat (@local-ollama)',
+      label: 'Local Ollama (@localllm)',
       icon: <MessageSquareCode className="w-5 h-5" />,
     },
     {

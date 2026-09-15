@@ -99,10 +99,10 @@ export interface AuthResult {
 `,
   'README.md': `# Sample Backend Service
 
-This workspace is managed by Local Ollama Chat.
+This workspace is managed by Local Ollama.
 Try asking the model:
-- \`@local-ollama /edit Add rate limiting to routes.ts\`
-- \`@local-ollama /refactor Extract error handling into a dedicated middleware\`
-- \`@local-ollama Explain how authentication works in this project\`
+- \`@localllm /edit Add rate limiting to routes.ts\`
+- \`@localllm /refactor Extract error handling into a dedicated middleware\`
+- \`@localllm Explain how authentication works in this project\`
 `
 };

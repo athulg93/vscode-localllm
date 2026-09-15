@@ -63,7 +63,7 @@ export function App() {
     {
       id: 'welcome',
       role: 'assistant',
-      content: `Welcome to **Local Ollama Chat** (@local-ollama)!
+      content: `Welcome to **Local Ollama** (@localllm)!
 
 I bring local AI assistance to your workspace with bounded tool execution and structured edit plans.
 
@@ -73,6 +73,7 @@ I bring local AI assistance to your workspace with bounded tool execution and st
 - \`/refactor <request>\` — Propose project-wide architectural refactoring
 - \`/connect\` — Test or configure your Ollama server connection
 - \`/update\` — Check GitHub Releases for newer extension versions
+- \`/pull\`, \`/push\`, \`/status\`, \`/diff\` — Local Git operations
 
 Try one of the quick prompt buttons below, or ask a question about \`AuthService.ts\`!`,
       timestamp: new Date().toLocaleTimeString(),
@@ -165,7 +166,9 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
     if (isLoading) return;
 
     let text = rawInput.trim();
-    if (text.startsWith('@local-ollama')) {
+    if (text.startsWith('@localllm')) {
+      text = text.replace(/^@localllm\s*/, '');
+    } else if (text.startsWith('@local-ollama')) {
       text = text.replace(/^@local-ollama\s*/, '');
     }
 
@@ -589,7 +592,7 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
           onSaveFile={handleSaveFile}
           onAskAboutFile={(path) => {
             setActiveTab('chat');
-            handleSendMessage(`@local-ollama Explain what ${path} does and suggest improvements.`);
+            handleSendMessage(`@localllm Explain what ${path} does and suggest improvements.`);
           }}
         />
       </div>

@@ -97,7 +97,7 @@ export const EditorArea: React.FC<EditorAreaProps> = ({
             className="flex items-center gap-1 hover:bg-[#2d2d2d] text-blue-400 hover:text-blue-300 px-2 py-0.5 rounded transition-colors"
           >
             <Sparkles className="w-3 h-3" />
-            <span>Ask @local-ollama</span>
+            <span>Ask @localllm</span>
           </button>
 
           <button

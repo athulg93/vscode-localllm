@@ -60,7 +60,7 @@ export class UpdateManager {
       async (progress) => {
         progress.report({ message: `Downloading ${asset.name}...` });
         const response = await fetch(downloadUrl, {
-          headers: { Accept: 'application/octet-stream', 'User-Agent': 'local-ollama-chat' },
+          headers: { Accept: 'application/octet-stream', 'User-Agent': 'local-ollama' },
         });
         if (!response.ok) {
           throw new Error(`GitHub returned ${response.status} ${response.statusText} while downloading the update.`);
@@ -140,7 +140,7 @@ export class UpdateManager {
           workspacePath,
         );
 
-        const vsixPath = path.join(workspacePath, `local-ollama-chat-${workspaceVersion}.vsix`);
+        const vsixPath = path.join(workspacePath, `local-ollama-${workspaceVersion}.vsix`);
         await this.assertFileExists(vsixPath, `Expected VSIX was not produced at ${vsixPath}.`);
 
         progress.report({ message: 'Installing updated VSIX...' });
@@ -163,7 +163,7 @@ export class UpdateManager {
 
   private async getLatestRelease(): Promise<GitHubRelease> {
     const response = await fetch(GITHUB_RELEASES_API, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'local-ollama-chat' },
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'local-ollama' },
     });
     if (!response.ok) {
       throw new Error(`Could not check GitHub Releases (${response.status} ${response.statusText}).`);

@@ -110,7 +110,7 @@ export const UpdatePanel: React.FC<UpdatePanelProps> = ({ currentVersion }) => {
             <span>Extension Verification</span>
           </div>
           <p className="text-[10px] text-neutral-500">
-            Package: local-ollama.local-ollama-chat
+            Package: agovind.local-ollama
             <br />
             Published from repository: athulg93/vscode-localllm
           </p>

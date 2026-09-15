@@ -1,6 +1,6 @@
 {
-  "name": "Local Ollama Chat",
-  "description": "Web interface and emulator for the Local Ollama VS Code chat extension, featuring model discovery, bounded workspace exploration, and structured edit plans.",
+  "name": "Local Ollama",
+  "description": "Web workbench and emulator for the Local Ollama VS Code chat extension (@localllm), featuring model discovery, bounded workspace exploration, and structured edit plans.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

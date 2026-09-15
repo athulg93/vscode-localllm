@@ -1,18 +1,18 @@
 <div align="center">
 
-# 🦙 Local Ollama Chat
+# 🦙 Local Ollama
 
 **Bring local, private AI to VS Code Chat — powered by your own Ollama server.**
 
 [![VS Code](https://img.shields.io/badge/VS%20Code-%E2%89%A5%201.96.0-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
 [![Ollama](https://img.shields.io/badge/Requires-Ollama-000000?logo=ollama&logoColor=white)](https://ollama.com/)
-[![Latest Release](https://img.shields.io/badge/release-v1.3.0-brightgreen)](https://github.com/athulg93/vscode-localllm/releases/download/v1.3.0/local-ollama-chat-1.3.0.vsix)
+[![Latest Release](https://img.shields.io/badge/release-v1.3.1-brightgreen)](https://github.com/athulg93/vscode-localllm/releases/download/v1.3.1/local-ollama-1.3.1.vsix)
 
 </div>
 
 ---
 
-Local Ollama Chat connects the **VS Code Chat** experience to an **Ollama server** running on your machine. Use local models for conversation, workspace-aware code analysis, bounded file exploration, and reviewable file edits — **without sending your source code to a hosted AI service.**
+Local Ollama connects the **VS Code Chat** experience to an **Ollama server** running on your machine. Use local models for conversation, workspace-aware code analysis, bounded file exploration, and reviewable file edits — **without sending your source code to a hosted AI service.**
 
 ## Table of Contents
 
@@ -36,7 +36,7 @@ Local Ollama Chat connects the **VS Code Chat** experience to an **Ollama server
 
 - 🔌 Connects VS Code Chat to any reachable Ollama-compatible server
 - 📋 Discovers installed Ollama models and lets you switch between them
-- 💬 Streams responses through the `@local-ollama` chat participant
+- 💬 Streams responses through the `@localllm` chat participant
 - 🧠 Selects relevant workspace context for questions about the current file or project
 - 🔍 Explores a workspace in multiple bounded steps instead of guessing which files matter
 - 🧩 Selects a model-specific tool strategy and avoids workspace tools for casual prompts
@@ -69,7 +69,7 @@ ollama pull qwen2.5-coder:7b
 
 ### Option A — Install the published VSIX
 
-1. Download [`local-ollama-chat-1.3.0.vsix`](https://github.com/athulg93/vscode-localllm/releases/download/v1.3.0/local-ollama-chat-1.3.0.vsix) from the GitHub release.
+1. Download [`local-ollama-1.3.1.vsix`](https://github.com/athulg93/vscode-localllm/releases/download/v1.3.1/local-ollama-1.3.1.vsix) from the GitHub release.
 2. In VS Code, open **Extensions**.
 3. Click the `...` menu → **Install from VSIX...** → select the downloaded file.
 4. Reload VS Code if prompted.
@@ -91,7 +91,7 @@ Then use **Extensions: Install from VSIX...** after packaging the extension, or 
 2. Open a workspace in VS Code.
 3. Run **Local Ollama: Connect** from the Command Palette.
 4. Enter the Ollama server URL, then select a model.
-5. Open VS Code Chat and address a prompt to `@local-ollama`.
+5. Open VS Code Chat and address a prompt to `@localllm`.
 
 The default server URL is `http://localhost:11434`. You can also configure the connection manually in **Settings** under **Local Ollama**.
 
@@ -100,29 +100,33 @@ The default server URL is `http://localhost:11434`. You can also configure the c
 Use the participant directly in VS Code Chat:
 
 ```text
-@local-ollama Explain the authentication flow in this project.
+@localllm Explain the authentication flow in this project.
 ```
 
 ### Chat Commands
 
 | Command | What it does | Example |
 | --- | --- | --- |
-| `/models` | Lists models available from the configured Ollama server. | `@local-ollama /models` |
-| `/connect` | Prompts for a server URL and default model. | `@local-ollama /connect` |
-| `/change-model` | Lists local models, checks tool support, and changes the active default model. | `@local-ollama /change-model` |
-| `/edit` | Creates a reviewable edit plan for the current file or requested files. | `@local-ollama /edit improve error handling` |
-| `/refactor` | Creates a reviewable multi-file refactor plan. | `@local-ollama /refactor simplify duplicated validation` |
-| `/update` | Checks GitHub Releases for a newer extension version. | `@local-ollama /update` |
+| `/models` | Lists models available from the configured Ollama server. | `@localllm /models` |
+| `/connect` | Prompts for a server URL and default model. | `@localllm /connect` |
+| `/change-model` | Lists local models, checks tool support, and changes the active default model. | `@localllm /change-model` |
+| `/edit` | Creates a reviewable edit plan for the current file or requested files. | `@localllm /edit improve error handling` |
+| `/refactor` | Creates a reviewable multi-file refactor plan. | `@localllm /refactor simplify duplicated validation` |
+| `/update` | Checks GitHub Releases for a newer extension version. | `@localllm /update` |
+| `/pull` | Git pull latest changes from remote repository. | `@localllm /pull` |
+| `/push` | Git push commits to remote repository. | `@localllm /push` |
+| `/status` | Show Git working tree and branch status. | `@localllm /status` |
+| `/diff` | Show bounded working tree or staged diff. | `@localllm /diff` |
 
-> The updater also recognizes `@local-ollama run update`.
+> The updater also recognizes `@localllm run update`.
 
 ### Git operations
 
-For a workspace opened inside a Git repository, ask `@local-ollama` to inspect or manage Git:
+For a workspace opened inside a Git repository, ask `@localllm` to inspect or manage Git:
 
 ```text
-@local-ollama Check the Git status and show the latest diff.
-@local-ollama Stage the changed source files, commit them with "fix: improve validation", and push the current branch.
+@localllm Check the Git status and show the latest diff.
+@localllm Stage the changed source files, commit them with "fix: improve validation", and push the current branch.
 ```
 
 Read-only operations such as status, diff, log, and branch inspection can run automatically. Staging, committing, pushing, pulling, and switching branches always display the exact operation in a modal confirmation dialog. The Git layer does not expose arbitrary shell commands, force-push, branch creation/deletion, reset, or sensitive `.env` files.
@@ -148,7 +152,7 @@ You can also use **Local Ollama: Select Model** or **Local Ollama: List Models**
 Use **Local Ollama: Change Model** from the Command Palette, or run:
 
 ```text
-@local-ollama /change-model
+@localllm /change-model
 ```
 
 The extension lists the models available on the configured Ollama server, lets you choose one, and saves it as the active default for subsequent requests. During model selection and connection, the extension checks Ollama's model capabilities. If the selected model does not support tools, it displays a warning because workspace exploration and AI-assisted edit workflows may not work with that model.
@@ -176,7 +180,7 @@ The model can chain these tools — for example: discover likely files → searc
 Ask for a focused change:
 
 ```text
-@local-ollama /edit Add input validation to the current API handler.
+@localllm /edit Add input validation to the current API handler.
 ```
 
 The extension then:
@@ -216,7 +220,7 @@ All settings live under **Settings → Extensions → Local Ollama**.
 Run **Local Ollama: Check for Updates** from the Command Palette, or:
 
 ```text
-@local-ollama /update
+@localllm /update
 ```
 
 The updater:
@@ -290,7 +294,7 @@ Build a VSIX:
 npm run package -- --allow-star-activation --skip-license --allow-missing-repository
 ```
 
-The output file is named `local-ollama-chat-<version>.vsix`.
+The output file is named `local-ollama-<version>.vsix`.
 
 > Automated tests currently cover `src/core/` only (prompt-intent classification, edit-plan parsing, path safety, and NDJSON stream parsing). Before publishing, also validate: compilation, VSIX integrity, a local Ollama request, and the GitHub release asset.
 

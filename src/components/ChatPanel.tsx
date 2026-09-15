@@ -150,12 +150,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   };
 
   const samplePrompts = [
-    { label: '/git pull', text: '@local-ollama /git pull' },
-    { label: '/git push', text: '@local-ollama /git push' },
-    { label: 'git status', text: '@local-ollama check git status' },
-    { label: '/edit Input Validation', text: '@local-ollama /edit Add password length validation and account lockout to AuthService' },
-    { label: '/refactor Health Check', text: '@local-ollama /refactor Add health check endpoint and error wrapper in routes.ts' },
-    { label: '/models', text: '@local-ollama /models' },
+    { label: '/git pull', text: '@localllm /git pull' },
+    { label: '/git push', text: '@localllm /git push' },
+    { label: 'git status', text: '@localllm check git status' },
+    { label: '/edit Input Validation', text: '@localllm /edit Add password length validation and account lockout to AuthService' },
+    { label: '/refactor Health Check', text: '@localllm /refactor Add health check endpoint and error wrapper in routes.ts' },
+    { label: '/models', text: '@localllm /models' },
   ];
 
   return (
@@ -164,7 +164,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       <div className="h-9 px-4 flex items-center justify-between border-b border-[#333333] text-[11px] font-bold uppercase tracking-wider text-[#bbbbbb]">
         <div className="flex items-center gap-1.5">
           <Bot className="w-4 h-4 text-blue-400" />
-          <span>Chat: @local-ollama</span>
+          <span>Chat: @localllm</span>
         </div>
         <div className="flex items-center gap-2">
           {onClearChat && (
@@ -205,7 +205,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 ) : (
                   <>
                     <Bot className="w-3 h-3 text-blue-400" />
-                    <span className="text-blue-400 font-semibold">@local-ollama</span>
+                    <span className="text-blue-400 font-semibold">@localllm</span>
                     {msg.intent && (
                       <span className="bg-[#1e1e1e] border border-[#3c3c3c] text-neutral-300 px-1.5 py-0.5 rounded text-[9px] font-mono">
                         {msg.intent}
@@ -357,13 +357,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type / for Git & code commands, or ask @local-ollama..."
+            placeholder="Type / for Git & code commands, or ask @localllm..."
             className="w-full bg-transparent text-xs text-white placeholder-[#777777] focus:outline-none resize-none"
           />
 
           <div className="flex items-center justify-between pt-1 border-t border-[#333333] text-[10px] text-[#858585]">
             <div className="flex items-center gap-1 font-mono">
-              <span className="text-blue-400">@local-ollama</span>
+              <span className="text-blue-400">@localllm</span>
               <span>•</span>
               <span>Type / for commands</span>
             </div>

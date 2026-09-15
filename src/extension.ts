@@ -214,7 +214,7 @@ function registerChatParticipant(
   outputChannel: ActivityLogger,
   telemetry: ModelBehaviorTelemetry,
 ) {
-  const participant = vscode.chat.createChatParticipant('local-ollama.participant', async (request, chatContext, stream, token) => {
+  const participant = vscode.chat.createChatParticipant('localllm.participant', async (request, chatContext, stream, token) => {
     outputChannel.appendLine(`[Chat] Request started; command=${request.command ?? 'none'}, prompt length=${request.prompt.length}.`);
     const resetConversation = isConversationResetRequest(request.prompt);
     if (resetConversation) {
@@ -491,7 +491,7 @@ export function activate(context: vscode.ExtensionContext) {
   const extensionPackage = context.extension.packageJSON as { name?: string; publisher?: string; version?: string };
   const extensionId = extensionPackage.publisher && extensionPackage.name
     ? `${extensionPackage.publisher}.${extensionPackage.name}`
-    : 'local-ollama.local-ollama-chat';
+    : 'agovind.local-ollama';
   const extensionVersion = extensionPackage.version ?? '0.1.0';
 
   const connectCommand = vscode.commands.registerCommand('localOllama.connect', async () => {
