@@ -12,10 +12,10 @@ import {
   MAX_TOOL_RESULTS,
   MAX_TOOL_SEARCH_FILE_CHARS,
   MAX_TOOL_SEARCH_MATCHES,
-  PROTECTED_PATH_SEGMENTS,
   PROJECT_EXCLUDE_GLOB,
-  TEXT_FILE_EXTENSIONS,
 } from '../constants';
+import { extractJsonBlock } from '../core/EditPlanParser';
+import { isSafeToolReadPath, isTextSourceExtension, normalizeRelativePathPrefix } from '../core/PathSafety';
 import { classifyPromptIntent } from '../core/PromptIntentClassifier';
 import { Logger, ModelProvider, ToolDefinition } from '../core/contracts';
 import { ContextSelectionResponse, PromptIntent } from '../types';
@@ -43,6 +43,11 @@ export class ContextManager {
   private readonly cache = new Map<string, ContextCacheEntry>();
 
   constructor(private readonly outputChannel: Logger) {}
+
+  clearCache(): void {
+    this.cache.clear();
+    this.outputChannel.appendLine('[Context] Context cache cleared.');
+  }
 
   classifyPromptIntent(prompt: string): PromptIntent {
     return classifyPromptIntent(prompt);
@@ -104,7 +109,7 @@ export class ContextManager {
     }
 
     const path = typeof arguments_.path === 'string' ? arguments_.path.replace(/\\/g, '/') : '';
-    if (!path || !this.isSafeToolPath(path)) {
+    if (!path || !isSafeToolReadPath(path)) {
       return JSON.stringify({ error: 'The requested path is not allowed. Use a workspace-relative text-file path without .. segments.' });
     }
 
@@ -132,7 +137,7 @@ export class ContextManager {
   }
 
   private async listWorkspaceFiles(arguments_: Record<string, unknown>): Promise<string> {
-    const pathPrefix = this.normalizeToolPrefix(arguments_.pathPrefix);
+    const pathPrefix = normalizeRelativePathPrefix(arguments_.pathPrefix);
     if (pathPrefix === undefined) {
       return JSON.stringify({ error: 'The pathPrefix is not allowed.' });
     }
@@ -150,7 +155,7 @@ export class ContextManager {
 
   private async searchWorkspace(arguments_: Record<string, unknown>): Promise<string> {
     const query = typeof arguments_.query === 'string' ? arguments_.query : '';
-    const pathPrefix = this.normalizeToolPrefix(arguments_.pathPrefix);
+    const pathPrefix = normalizeRelativePathPrefix(arguments_.pathPrefix);
     if (!query.trim()) {
       return JSON.stringify({ error: 'The search query is required.' });
     }
@@ -301,7 +306,7 @@ export class ContextManager {
   }
 
   private parseContextSelection(raw: string, candidatePaths: string[]): ContextSelectionResponse {
-    const parsed = JSON.parse(this.extractJsonBlock(raw)) as ContextSelectionResponse;
+    const parsed = JSON.parse(extractJsonBlock(raw)) as ContextSelectionResponse;
     const candidateSet = new Set(candidatePaths);
     const scope = parsed.scope ?? 'none';
 
@@ -494,46 +499,12 @@ export class ContextManager {
     return new TextDecoder().decode(bytes);
   }
 
-  private extractJsonBlock(raw: string): string {
-    const trimmed = raw.trim();
-    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-      return trimmed;
-    }
-
-    const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    if (fencedMatch && fencedMatch[1]) {
-      return fencedMatch[1].trim();
-    }
-
-    const firstBrace = trimmed.indexOf('{');
-    const lastBrace = trimmed.lastIndexOf('}');
-    if (firstBrace >= 0 && lastBrace > firstBrace) {
-      return trimmed.slice(firstBrace, lastBrace + 1).trim();
-    }
-
-    return trimmed;
-  }
-
   private truncateContent(content: string, maxChars: number): string {
     return content.length <= maxChars ? content : `${content.slice(0, maxChars)}\n\n...[truncated]`;
   }
 
-  private getFileExtension(fileName: string): string {
-    const dotIndex = fileName.lastIndexOf('.');
-    return dotIndex === -1 ? '' : fileName.slice(dotIndex).toLowerCase();
-  }
-
   private isLikelyTextSourceFile(uri: vscode.Uri): boolean {
-    return uri.scheme === 'file' && TEXT_FILE_EXTENSIONS.has(this.getFileExtension(uri.fsPath));
-  }
-
-  private isSafeToolPath(path: string): boolean {
-    const segments = path.split('/');
-    return !path.startsWith('/')
-      && !segments.includes('..')
-      && !segments.some((segment) => PROTECTED_PATH_SEGMENTS.has(segment))
-      && !/[\*?\[\]{}]/.test(path)
-      && this.isLikelyTextSourceFile(vscode.Uri.file(path));
+    return uri.scheme === 'file' && isTextSourceExtension(uri.fsPath);
   }
 
   private toToolLine(value: unknown, fallback: number): number {
@@ -544,28 +515,6 @@ export class ContextManager {
     return typeof value === 'number' && Number.isInteger(value) && value > 0
       ? Math.min(value, fallback)
       : fallback;
-  }
-
-  private normalizeToolPrefix(value: unknown): string | undefined {
-    if (value === undefined) {
-      return '';
-    }
-
-    if (typeof value !== 'string') {
-      return undefined;
-    }
-
-    const normalized = value.trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
-    if (!normalized) {
-      return '';
-    }
-
-    if (normalized.startsWith('/') || normalized.split('/').includes('..') || /[\*?\[\]{}!]/.test(normalized)) {
-      return undefined;
-    }
-
-    const segments = normalized.split('/');
-    return segments.some((segment) => PROTECTED_PATH_SEGMENTS.has(segment)) ? undefined : normalized;
   }
 
   private scoreCandidate(uri: vscode.Uri, activeFilePath: string | undefined): number {

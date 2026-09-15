@@ -1,11 +1,26 @@
 import * as vscode from 'vscode';
 import { DEFAULT_BASE_URL, DEFAULT_MAX_TOOL_CALLS, DEFAULT_MODEL, DEFAULT_TEMPERATURE, HUMAN_READABLE_SYSTEM_PROMPT, MAX_ALLOWED_TOOL_CALLS } from './constants';
 import { ContextManager } from './services/ContextManager';
-import { EditorManager } from './services/EditorManager';
+import { EditorManager, EditStream } from './services/EditorManager';
 import { OllamaClient } from './services/OllamaClient';
 import { UpdateManager } from './services/UpdateManager';
 import { ActivityLogger } from './services/ActivityLogger';
+import { GitManager } from './services/GitManager';
 import { ModelProvider } from './core/contracts';
+import { ModelBehaviorTelemetry } from './core/ModelBehaviorTelemetry';
+import { modelProfileLabel } from './core/ModelProfiles';
+import { boundConversationHistory, isConversationResetRequest } from './core/ConversationHistory';
+import { ConversationMessage } from './core/contracts';
+
+type ModelChangeRequest = {
+  isRequest: boolean;
+  requestedModel?: string;
+};
+
+type InlineModelDirective = {
+  requestedModel?: string;
+  remainingPrompt: string;
+};
 
 function getSetting<T>(section: string, fallback: T): T {
   const value = vscode.workspace.getConfiguration('localOllama').get<T>(section, fallback);
@@ -24,9 +39,13 @@ async function promptForBaseUrl(): Promise<string | undefined> {
   return result?.trim() || undefined;
 }
 
-async function promptForModel(baseUrl: string, outputChannel: ActivityLogger): Promise<string | undefined> {
-  let models: string[] = [];
-  const client = new OllamaClient(baseUrl, outputChannel);
+async function promptForModel(
+  baseUrl: string,
+  outputChannel: ActivityLogger,
+  telemetry?: ModelBehaviorTelemetry,
+): Promise<string | undefined> {
+  let models: string[];
+  const client = new OllamaClient(baseUrl, outputChannel, telemetry);
 
   try {
     models = await client.listModels();
@@ -43,18 +62,72 @@ async function promptForModel(baseUrl: string, outputChannel: ActivityLogger): P
       placeHolder: DEFAULT_MODEL,
       ignoreFocusOut: true,
     });
-    return result?.trim() || undefined;
+    const model = result?.trim() || undefined;
+    if (model) {
+      await showModelCapabilities(client, model, outputChannel);
+    }
+
+    return model;
   }
 
   const selection = await vscode.window.showQuickPick(models, {
-    placeHolder: 'Select the local Ollama model',
+    placeHolder: 'Select the local Ollama model (tool support will be checked)',
     ignoreFocusOut: true,
   });
+
+  if (selection) {
+    await showModelCapabilities(client, selection, outputChannel);
+  }
 
   return selection;
 }
 
-function parseInlineModelDirective(prompt: string): { requestedModel?: string; remainingPrompt: string } {
+async function showModelCapabilities(
+  client: OllamaClient,
+  model: string,
+  outputChannel: ActivityLogger,
+): Promise<void> {
+  try {
+    const profile = await client.getModelProfile(model);
+    const behaviorWarning = client.getModelBehaviorWarning(model);
+    if (!profile.supportsTools) {
+      await vscode.window.showWarningMessage(
+        `Model "${model}" has no tool support. Normal chat will work, but workspace exploration and AI edit workflows are unavailable. Choose a tool-capable model for those features.`,
+        'Continue',
+      );
+    } else if (behaviorWarning) {
+      await vscode.window.showWarningMessage(`${behaviorWarning} ${modelProfileLabel(profile)}.`, 'Continue');
+    } else {
+      await vscode.window.showInformationMessage(`${modelProfileLabel(profile)} for ${model}.`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    outputChannel.appendLine(`[Connect] Could not verify tool support for ${model}: ${message}`);
+    await vscode.window.showWarningMessage(`Tool capability could not be verified for "${model}". Normal chat will remain available, but workspace tools may not work.`, 'Continue');
+  }
+}
+
+function parseModelChangeRequest(prompt: string): ModelChangeRequest {
+  const trimmed = prompt.trim();
+  const namedModel = trimmed.match(
+    /^(?:please\s+)?(?:change|switch)\s+(?:my\s+|the\s+)?(?:local\s+ollama\s+)?model\s+(?:to|:)\s+([^\s.!?]+)[.!?\s]*$/i,
+  );
+  if (namedModel?.[1]) {
+    return { isRequest: true, requestedModel: namedModel[1] };
+  }
+
+  const switchToModel = trimmed.match(/^(?:please\s+)?switch\s+to\s+([^\s.!?]+)(?:\s+model)?[.!?\s]*$/i);
+  if (switchToModel?.[1]) {
+    return { isRequest: true, requestedModel: switchToModel[1] };
+  }
+
+  return {
+    isRequest: /^(?:please\s+)?(?:change|switch)\s+(?:my\s+|the\s+)?(?:local\s+ollama\s+)?model[.!?\s]*$/i.test(trimmed),
+    requestedModel: undefined,
+  };
+}
+
+function parseInlineModelDirective(prompt: string): InlineModelDirective {
   const trimmed = prompt.trim();
   if (trimmed === '@') {
     return { requestedModel: 'models', remainingPrompt: '' };
@@ -62,13 +135,13 @@ function parseInlineModelDirective(prompt: string): { requestedModel?: string; r
 
   const match = trimmed.match(/^@([^\s]+)\s*(.*)$/s);
   if (!match) {
-    return { remainingPrompt: prompt };
+    return { requestedModel: undefined, remainingPrompt: prompt };
   }
 
   const [, requestedModelRaw, remainingPrompt] = match;
   const requestedModel = requestedModelRaw?.trim();
   if (!requestedModel) {
-    return { remainingPrompt: prompt };
+    return { requestedModel: undefined, remainingPrompt: prompt };
   }
 
   return { requestedModel, remainingPrompt: remainingPrompt?.trim() ?? '' };
@@ -86,32 +159,49 @@ async function resolveModelName(client: ModelProvider, requestedModel: string): 
     return caseInsensitive;
   }
 
+  const untaggedMatch = models.filter((model) => model.split(':', 1)[0]?.toLowerCase() === requestedModel.toLowerCase());
+  if (untaggedMatch.length === 1) {
+    return untaggedMatch[0];
+  }
+
   throw new Error(`Model "${requestedModel}" was not found on the local Ollama server. Available models: ${models.join(', ') || 'none'}.`);
 }
 
-function createNotificationStream(outputChannel: vscode.OutputChannel): vscode.ChatResponseStream {
-  const streamLike: vscode.ChatResponseStream = {
+function createNotificationStream(outputChannel: vscode.OutputChannel): EditStream {
+  return {
     markdown: (value: string | vscode.MarkdownString) => {
       const text = value.toString();
       outputChannel.appendLine(text);
       void vscode.window.showInformationMessage(text.slice(0, 400));
-      return streamLike;
     },
     progress: (value?: string | vscode.MarkdownString) => {
       if (value) {
         outputChannel.appendLine(value.toString());
       }
-
-      return streamLike;
     },
-    anchor: () => streamLike,
-    button: () => streamLike,
-    filetree: () => streamLike,
-    reference: () => streamLike,
-    push: () => streamLike,
-  } as unknown as vscode.ChatResponseStream;
+  };
+}
 
-  return streamLike;
+function getConversationHistory(chatContext: vscode.ChatContext): ConversationMessage[] {
+  const history: ConversationMessage[] = [];
+
+  for (const turn of chatContext.history) {
+    if ('prompt' in turn) {
+      history.push({ role: 'user', content: turn.prompt });
+      continue;
+    }
+
+    const content = turn.response
+      .filter((part): part is vscode.ChatResponseMarkdownPart => 'value' in part)
+      .map((part) => part.value.toString())
+      .join('')
+      .trim();
+    if (content) {
+      history.push({ role: 'assistant', content });
+    }
+  }
+
+  return boundConversationHistory(history);
 }
 
 function registerChatParticipant(
@@ -119,18 +209,28 @@ function registerChatParticipant(
   contextManager: ContextManager,
   editorManager: EditorManager,
   updateManager: UpdateManager,
+  gitManager: GitManager,
   extensionVersion: string,
   outputChannel: ActivityLogger,
+  telemetry: ModelBehaviorTelemetry,
 ) {
-  const participant = vscode.chat.createChatParticipant('local-ollama.participant', async (request, _, stream, token) => {
+  const participant = vscode.chat.createChatParticipant('local-ollama.participant', async (request, chatContext, stream, token) => {
     outputChannel.appendLine(`[Chat] Request started; command=${request.command ?? 'none'}, prompt length=${request.prompt.length}.`);
+    const resetConversation = isConversationResetRequest(request.prompt);
+    if (resetConversation) {
+      contextManager.clearCache();
+      outputChannel.appendLine('[Chat] Explicit conversation reset requested; prior turns will be ignored.');
+    }
+    const conversationHistory = resetConversation ? [] : getConversationHistory(chatContext);
+    outputChannel.appendLine(`[Chat] Conversation history prepared; messages=${conversationHistory.length}.`);
     const baseUrl = getSetting<string>('baseUrl', DEFAULT_BASE_URL);
     let defaultModel = getSetting<string>('defaultModel', DEFAULT_MODEL);
     const temperature = getSetting<number>('temperature', DEFAULT_TEMPERATURE);
     const maxToolCalls = Math.min(getSetting<number>('maxToolCalls', DEFAULT_MAX_TOOL_CALLS), MAX_ALLOWED_TOOL_CALLS);
-    const client = new OllamaClient(baseUrl, outputChannel);
+    const client = new OllamaClient(baseUrl, outputChannel, telemetry);
     const { requestedModel, remainingPrompt } = parseInlineModelDirective(request.prompt);
     const effectivePrompt = requestedModel ? remainingPrompt : request.prompt;
+    const modelChange = parseModelChangeRequest(effectivePrompt);
 
     if (requestedModel) {
       if (requestedModel.toLowerCase() === 'models') {
@@ -149,6 +249,8 @@ function registerChatParticipant(
       try {
         defaultModel = await resolveModelName(client, requestedModel);
         outputChannel.appendLine(`[Chat] Inline model selected: ${defaultModel}.`);
+        await showModelCapabilities(client, defaultModel, outputChannel);
+
         await vscode.workspace.getConfiguration('localOllama').update('defaultModel', defaultModel, vscode.ConfigurationTarget.Global);
 
         if (!effectivePrompt.trim()) {
@@ -177,6 +279,28 @@ function registerChatParticipant(
       }
     }
 
+    if (request.command === 'change-model' || modelChange.isRequest) {
+      try {
+        const model = modelChange.requestedModel
+          ? await resolveModelName(client, modelChange.requestedModel)
+          : await promptForModel(baseUrl, outputChannel, telemetry);
+        if (!model) {
+          stream.markdown('No model change was made.');
+          return;
+        }
+
+        if (modelChange.requestedModel) {
+          await showModelCapabilities(client, model, outputChannel);
+        }
+        await vscode.workspace.getConfiguration('localOllama').update('defaultModel', model, vscode.ConfigurationTarget.Global);
+        stream.markdown(`Active default model changed to **${model}**.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        stream.markdown(`I could not change the model.\n\n${message}`);
+      }
+      return;
+    }
+
     if (request.command === 'update' || /^(?:run\s+)?update\b/i.test(effectivePrompt)) {
       try {
         stream.progress('Checking for a newer Local Ollama release...');
@@ -198,6 +322,7 @@ function registerChatParticipant(
           contextManager,
           model: resolvedModel,
           prompt: effectivePrompt,
+          conversationHistory,
           temperature,
           stream,
           token,
@@ -218,7 +343,7 @@ function registerChatParticipant(
         return;
       }
 
-      const model = await promptForModel(connection, outputChannel);
+      const model = await promptForModel(connection, outputChannel, telemetry);
       if (!model) {
         stream.markdown('No model was selected.');
         return;
@@ -228,6 +353,45 @@ function registerChatParticipant(
       await vscode.workspace.getConfiguration('localOllama').update('defaultModel', model, vscode.ConfigurationTarget.Global);
       stream.markdown(`Connected to ${connection} and set the default model to **${model}**.`);
       return;
+    }
+
+    // Direct Git command shortcuts (e.g. /git pull, /pull, /push, /git push, /git status)
+    const directGitMatch = effectivePrompt.match(/^\/?(?:git\s+)?(pull|push|status|diff|log|branch)(?:\s+(.*))?$/i);
+    if (directGitMatch) {
+      const gitAction = directGitMatch[1].toLowerCase();
+      const extraArgs = (directGitMatch[2] || '').trim();
+      stream.progress(`Executing Git operation: ${gitAction}...`);
+      outputChannel.appendLine(`[Git] Direct slash execution for ${gitAction} with args "${extraArgs}".`);
+
+      let toolName = `git_${gitAction}`;
+      let toolArgs: Record<string, unknown> = {};
+
+      if (gitAction === 'pull' || gitAction === 'push') {
+        const parts = extraArgs.split(/\s+/).filter(Boolean);
+        if (parts[0]) toolArgs.remote = parts[0];
+        if (parts[1]) toolArgs.branch = parts[1];
+      }
+
+      try {
+        const rawResult = await gitManager.executeTool(toolName, toolArgs);
+        let parsed: { error?: string; cancelled?: boolean; message?: string } | null = null;
+        try {
+          parsed = JSON.parse(rawResult);
+        } catch {}
+
+        if (parsed?.error) {
+          stream.markdown(`**Git operation failed:**\n\n${parsed.error}`);
+        } else if (parsed?.cancelled) {
+          stream.markdown(`*Git operation was cancelled by the user.*`);
+        } else {
+          stream.markdown(`### Git ${gitAction.toUpperCase()} Result\n\n\`\`\`\n${rawResult}\n\`\`\``);
+        }
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        stream.markdown(`Git execution error: ${msg}`);
+        return;
+      }
     }
 
     try {
@@ -246,6 +410,7 @@ function registerChatParticipant(
           contextManager,
           model: resolvedModel,
           prompt: effectivePrompt,
+          conversationHistory,
           temperature,
           stream,
           token,
@@ -254,17 +419,24 @@ function registerChatParticipant(
         return;
       }
 
-      const response = await client.sendPromptWithTools(resolvedModel, [
-        effectivePrompt,
-        '',
-        'You have bounded workspace exploration tools. Use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant line ranges.',
-        'Use multiple tool calls when needed. Do not claim to have inspected a file unless a tool result provided its content.',
-        'After gathering enough evidence, answer the user directly in concise markdown. Do not return tool-call JSON in the final answer.',
-      ].join('\n'), temperature, {
-        systemPrompt: HUMAN_READABLE_SYSTEM_PROMPT,
+      const isGitRequest = promptIntent === 'gitTransaction';
+      const response = await client.sendPromptWithTools(resolvedModel, effectivePrompt, temperature, {
+        systemPrompt: [
+          HUMAN_READABLE_SYSTEM_PROMPT,
+          'You have bounded workspace and Git tools.',
+          'IMPORTANT FOR GIT TRANSACTIONS: When the user asks you to perform Git actions (such as pull, push, status, diff, commit, checkout, stage, or check branch), DO NOT provide markdown tutorials, bash instructions, or tell the user to run commands manually in a terminal. You MUST call the corresponding git tool (such as git_pull, git_push, git_status, git_commit, git_diff, git_branch, git_checkout) directly via tool call.',
+          'Use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant line ranges.',
+          'Use Git tools for repository status, diffs, history, branches, checkout, staging, commits, pushes, and pulls. Never infer Git branches from workspace filenames or file contents; use git_branch. Use git_checkout to switch branches and wait for its confirmation result.',
+          'Use multiple tool calls when needed. Do not claim to have inspected a file unless a tool result provided its content.',
+          'Do not stop after describing what you plan to do. Complete the original request in this turn, then answer the user directly in concise markdown with the outcome. Do not return tool-call JSON in the final answer.',
+          isGitRequest ? 'CRITICAL: The user has requested a Git transaction. Immediately execute the appropriate git tool.' : '',
+        ].filter(Boolean).join(' '),
+        conversationHistory,
         token,
-        tools: contextManager.getFileTools(),
-        executeTool: (name, arguments_) => contextManager.executeFileTool(name, arguments_),
+        tools: [...contextManager.getFileTools(), ...gitManager.getTools()],
+        executeTool: async (name, arguments_) => name.startsWith('git_')
+          ? gitManager.executeTool(name, arguments_)
+          : contextManager.executeFileTool(name, arguments_),
         maxToolCalls,
         onStatus: (message) => stream.progress(message),
       });
@@ -289,10 +461,12 @@ export function activate(context: vscode.ExtensionContext) {
   const logDirectory = context.globalStorageUri;
   const logUri = vscode.Uri.joinPath(logDirectory, 'activity.log');
   const activityLogger = new ActivityLogger(outputChannel, logDirectory, logUri);
+  const telemetry = new ModelBehaviorTelemetry(context.globalState);
   activityLogger.appendLine(`[Lifecycle] Extension activated; version=${context.extension.packageJSON.version ?? 'unknown'}; log=${activityLogger.logPath}.`);
   const contextManager = new ContextManager(activityLogger);
   const editorManager = new EditorManager(activityLogger);
   const updateManager = new UpdateManager(activityLogger, context.globalStorageUri);
+  const gitManager = new GitManager(activityLogger);
   const extensionPackage = context.extension.packageJSON as { name?: string; publisher?: string; version?: string };
   const extensionId = extensionPackage.publisher && extensionPackage.name
     ? `${extensionPackage.publisher}.${extensionPackage.name}`
@@ -305,7 +479,7 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    const model = await promptForModel(baseUrl, activityLogger);
+    const model = await promptForModel(baseUrl, activityLogger, telemetry);
     if (!model) {
       return;
     }
@@ -316,20 +490,22 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.showInformationMessage(`Connected to ${baseUrl} and default model set to ${model}.`);
   });
 
-  const selectModelCommand = vscode.commands.registerCommand('localOllama.selectModel', async () => {
+  const changeModel = async () => {
     const baseUrl = getSetting<string>('baseUrl', DEFAULT_BASE_URL);
-    const model = await promptForModel(baseUrl, activityLogger);
+    const model = await promptForModel(baseUrl, activityLogger, telemetry);
     if (!model) {
       return;
     }
 
     await vscode.workspace.getConfiguration('localOllama').update('defaultModel', model, vscode.ConfigurationTarget.Global);
-    vscode.window.showInformationMessage(`Default model updated to ${model}.`);
-  });
+    vscode.window.showInformationMessage(`Active default model changed to ${model}.`);
+  };
+  const selectModelCommand = vscode.commands.registerCommand('localOllama.selectModel', changeModel);
+  const changeModelCommand = vscode.commands.registerCommand('localOllama.changeModel', changeModel);
 
   const listModelsCommand = vscode.commands.registerCommand('localOllama.listModels', async () => {
     const baseUrl = getSetting<string>('baseUrl', DEFAULT_BASE_URL);
-    const client = new OllamaClient(baseUrl, activityLogger);
+    const client = new OllamaClient(baseUrl, activityLogger, telemetry);
 
     try {
       const models = await client.listModels();
@@ -350,7 +526,7 @@ export function activate(context: vscode.ExtensionContext) {
     const defaultModel = getSetting<string>('defaultModel', DEFAULT_MODEL);
     const temperature = getSetting<number>('temperature', DEFAULT_TEMPERATURE);
     const maxToolCalls = Math.min(getSetting<number>('maxToolCalls', DEFAULT_MAX_TOOL_CALLS), MAX_ALLOWED_TOOL_CALLS);
-    const client = new OllamaClient(baseUrl, activityLogger);
+    const client = new OllamaClient(baseUrl, activityLogger, telemetry);
 
     const prompt = await vscode.window.showInputBox({
       prompt: 'Describe how you want the current file changed',
@@ -371,6 +547,7 @@ export function activate(context: vscode.ExtensionContext) {
         prompt: `Please edit this file: ${prompt}`,
         temperature,
         stream: createNotificationStream(outputChannel),
+        maxToolCalls,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -382,7 +559,8 @@ export function activate(context: vscode.ExtensionContext) {
     const baseUrl = getSetting<string>('baseUrl', DEFAULT_BASE_URL);
     const defaultModel = getSetting<string>('defaultModel', DEFAULT_MODEL);
     const temperature = getSetting<number>('temperature', DEFAULT_TEMPERATURE);
-    const client = new OllamaClient(baseUrl, activityLogger);
+    const maxToolCalls = Math.min(getSetting<number>('maxToolCalls', DEFAULT_MAX_TOOL_CALLS), MAX_ALLOWED_TOOL_CALLS);
+    const client = new OllamaClient(baseUrl, activityLogger, telemetry);
 
     const prompt = await vscode.window.showInputBox({
       prompt: 'Describe what project refactor you want',
@@ -403,6 +581,7 @@ export function activate(context: vscode.ExtensionContext) {
         prompt: `Please refactor this project: ${prompt}`,
         temperature,
         stream: createNotificationStream(outputChannel),
+        maxToolCalls,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -412,7 +591,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const updateFromWorkspaceCommand = vscode.commands.registerCommand('localOllama.updateFromWorkspace', async () => {
     try {
-      await updateManager.updateFromWorkspace({ extensionId, extensionVersion });
+      await updateManager.updateFromWorkspace({ extensionId });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       outputChannel.appendLine(`[Update] ${message}`);
@@ -438,6 +617,7 @@ export function activate(context: vscode.ExtensionContext) {
     outputChannel,
     connectCommand,
     selectModelCommand,
+    changeModelCommand,
     listModelsCommand,
     applySuggestedEditCommand,
     refactorProjectCommand,
@@ -445,7 +625,7 @@ export function activate(context: vscode.ExtensionContext) {
     updateCommand,
     openActivityLogCommand,
   );
-  registerChatParticipant(context, contextManager, editorManager, updateManager, extensionVersion, activityLogger);
+  registerChatParticipant(context, contextManager, editorManager, updateManager, gitManager, extensionVersion, activityLogger, telemetry);
 }
 
 export function deactivate() {

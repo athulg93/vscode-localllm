@@ -2,8 +2,13 @@
   "name": "local-ollama-chat",
   "displayName": "Local Ollama Chat",
   "description": "Connect VS Code chat to a local Ollama instance and choose from your local models.",
-  "version": "1.2.0",
-  "publisher": "local-ollama",
+  "version": "1.3.0",
+  "publisher": "agovind",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/athulg93/vscode-localllm.git"
+  },
   "private": true,
   "engines": {
     "vscode": "^1.96.0"
@@ -25,6 +30,10 @@
       {
         "command": "localOllama.selectModel",
         "title": "Local Ollama: Select Model"
+      },
+      {
+        "command": "localOllama.changeModel",
+        "title": "Local Ollama: Change Model"
       },
       {
         "command": "localOllama.listModels",
@@ -101,6 +110,10 @@
             "description": "Configure base URL and default model"
           },
           {
+            "name": "change-model",
+            "description": "List local models and change the active default model"
+          },
+          {
             "name": "edit",
             "description": "Propose file edits, then apply or discard"
           },
@@ -111,6 +124,18 @@
           {
             "name": "update",
             "description": "Check GitHub Releases for a newer extension version"
+          },
+          {
+            "name": "pull",
+            "description": "Git pull from upstream or remote repository"
+          },
+          {
+            "name": "push",
+            "description": "Git push commits to upstream or remote repository"
+          },
+          {
+            "name": "git",
+            "description": "Run Git operations (pull, push, status, diff, log, branch)"
           }
         ],
         "isSticky": true
@@ -118,14 +143,28 @@
     ]
   },
   "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 3000",
+    "build": "vite build",
+    "lint": "tsc --noEmit",
     "compile": "tsc -p tsconfig.json",
     "package": "vsce package",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22.14.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@types/vscode": "^1.96.0",
+    "@vitejs/plugin-react": "^6.1.1",
     "@vscode/vsce": "^3.9.2",
-    "typescript": "^5.8.3"
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.8.3",
+    "vite": "^8.3.0"
+  },
+  "dependencies": {
+    "lucide-react": "^1.46.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   }
 }

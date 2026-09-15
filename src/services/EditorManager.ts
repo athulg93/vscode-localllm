@@ -5,13 +5,23 @@ import {
   EDIT_PLAN_SYSTEM_PROMPT,
   MAX_APPLY_FILE_CHARS,
   MAX_EDIT_FILES,
-  PROTECTED_FILE_NAMES,
-  PROTECTED_PATH_SEGMENTS,
 } from '../constants';
 import { ProposedEditsResponse, ProposedFileEdit } from '../types';
 import { ContextManager } from './ContextManager';
 import { parseEditPlan } from '../core/EditPlanParser';
-import { Logger, ModelProvider } from '../core/contracts';
+import { isProtectedPath, isSafeWorkspacePath } from '../core/PathSafety';
+import { ConversationMessage, Logger, ModelProvider } from '../core/contracts';
+
+/**
+ * The subset of `vscode.ChatResponseStream` that EditorManager actually uses.
+ * Keeping this narrow means callers (like a plain notification-based stream
+ * for command-palette workflows) can implement it directly and type-safely,
+ * without faking unused methods or casting to the full VS Code type.
+ */
+export type EditStream = {
+  markdown(value: string | vscode.MarkdownString): unknown;
+  progress(value?: string | vscode.MarkdownString): unknown;
+};
 
 type EditWorkflowOptions = {
   client: ModelProvider;
@@ -19,13 +29,14 @@ type EditWorkflowOptions = {
   model: string;
   prompt: string;
   temperature: number;
-  stream: vscode.ChatResponseStream;
+  stream: EditStream;
   token?: vscode.CancellationToken;
   maxToolCalls?: number;
+  conversationHistory?: ConversationMessage[];
 };
 
 type EditCandidate = {
-  operation: 'create' | 'update' | 'delete' | 'rename';
+  operation: 'create' | 'update' | 'delete' | 'rename' | 'copy';
   path: string;
   newPath?: string;
   content: string;
@@ -38,7 +49,7 @@ type EditCandidate = {
 type EditValidationResult =
   | {
     ok: true;
-    operation: 'create' | 'update' | 'delete' | 'rename';
+    operation: 'create' | 'update' | 'delete' | 'rename' | 'copy';
     uri: vscode.Uri;
     destinationUri?: vscode.Uri;
     createParentDirectories: vscode.Uri[];
@@ -130,6 +141,7 @@ export class EditorManager {
   private async proposeEdits(options: EditWorkflowOptions): Promise<ProposedEditsResponse> {
     const toolPrompt = [
       options.prompt,
+      this.formatConversationContext(options.conversationHistory),
       '',
       'Explore before editing: use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant ranges.',
       'You may use multiple tools in sequence. Do not assume you can access the filesystem directly. For an existing file, read the relevant lines before proposing an update.',
@@ -181,6 +193,22 @@ export class EditorManager {
     }
   }
 
+  private formatConversationContext(history: ConversationMessage[] | undefined): string {
+    if (!history?.length) {
+      return '';
+    }
+
+    const context = history
+      .map((message) => `${message.role.toUpperCase()}:
+${message.content}`)
+      .join('\n\n');
+    return [
+      'Prior conversation context. Use this only to resolve references such as "it", "that file", or "the previous step".',
+      'The current request below is authoritative. Return the requested edit plan as JSON only.',
+      context,
+    ].join('\n\n');
+  }
+
   private async prepareEditCandidates(edits: ProposedFileEdit[]): Promise<EditCandidate[]> {
     const candidates: EditCandidate[] = [];
 
@@ -223,6 +251,13 @@ export class EditorManager {
         workspaceEdit.replace(candidate.uri, this.toFullRange(document), candidate.content);
       } else if (candidate.operation === 'delete') {
         workspaceEdit.deleteFile(candidate.uri, { ignoreIfNotExists: true, recursive: false });
+      } else if (candidate.operation === 'copy') {
+        if (!candidate.destinationUri) {
+          skipped.push(`${candidate.path} (missing copy destination)`);
+          continue;
+        }
+        workspaceEdit.createFile(candidate.destinationUri, { ignoreIfExists: false });
+        workspaceEdit.insert(candidate.destinationUri, new vscode.Position(0, 0), candidate.content);
       } else if (candidate.destinationUri) {
         workspaceEdit.renameFile(candidate.uri, candidate.destinationUri, { overwrite: false, ignoreIfExists: false });
       } else {
@@ -241,7 +276,7 @@ export class EditorManager {
           continue;
         }
 
-        const targetUri = candidate.operation === 'rename' && candidate.destinationUri
+        const targetUri = (candidate.operation === 'rename' || candidate.operation === 'copy') && candidate.destinationUri
           ? candidate.destinationUri
           : candidate.uri;
         const document = await vscode.workspace.openTextDocument(targetUri);
@@ -308,11 +343,11 @@ export class EditorManager {
 
   private async validateProposedEdit(edit: ProposedFileEdit): Promise<EditValidationResult> {
     const normalizedPath = edit.path.replace(/\\/g, '/');
-    if (!this.isSafeWorkspacePath(normalizedPath)) {
+    if (!isSafeWorkspacePath(normalizedPath)) {
       return { ok: false, reason: 'path is outside the allowed workspace rules' };
     }
 
-    if (this.isProtectedPath(normalizedPath)) {
+    if (isProtectedPath(normalizedPath)) {
       return { ok: false, reason: 'path is protected' };
     }
 
@@ -342,18 +377,18 @@ export class EditorManager {
       return { ok: true, uri: matches[0], operation: 'delete', createParentDirectories: [] };
     }
 
-    if (operation === 'rename') {
+    if (operation === 'rename' || operation === 'copy') {
       const normalizedNewPath = (edit.newPath ?? '').replace(/\\/g, '/');
       if (!normalizedNewPath) {
-        return { ok: false, reason: 'rename requires newPath' };
+        return { ok: false, reason: `${operation} requires newPath` };
       }
 
-      if (!this.isSafeWorkspacePath(normalizedNewPath) || this.isProtectedPath(normalizedNewPath)) {
-        return { ok: false, reason: 'rename target path is not allowed' };
+      if (!isSafeWorkspacePath(normalizedNewPath) || isProtectedPath(normalizedNewPath)) {
+        return { ok: false, reason: `${operation} target path is not allowed` };
       }
 
       if (matches.length !== 1) {
-        return { ok: false, reason: 'rename source requires exactly one existing file path' };
+        return { ok: false, reason: `${operation} source requires exactly one existing file path` };
       }
 
       const sourceDocument = await vscode.workspace.openTextDocument(matches[0]);
@@ -364,7 +399,7 @@ export class EditorManager {
       const destinationUri = vscode.Uri.joinPath(workspaceFolder.uri, normalizedNewPath);
       const destinationMatches = await vscode.workspace.findFiles(normalizedNewPath, undefined, 2);
       if (destinationMatches.length > 0) {
-        return { ok: false, reason: 'rename target already exists' };
+        return { ok: false, reason: `${operation} target already exists` };
       }
 
       const parentResolution = await this.resolveMissingParentDirectories(
@@ -380,7 +415,7 @@ export class EditorManager {
         ok: true,
         uri: matches[0],
         destinationUri,
-        operation: 'rename',
+        operation,
         createParentDirectories: parentResolution.directories,
       };
     }
@@ -475,7 +510,7 @@ export class EditorManager {
   }
 
   private describeCandidateTarget(candidate: EditCandidate): string {
-    if (candidate.operation === 'rename' && candidate.destinationUri) {
+    if ((candidate.operation === 'rename' || candidate.operation === 'copy') && candidate.destinationUri) {
       return `${vscode.workspace.asRelativePath(candidate.uri, false)} -> ${vscode.workspace.asRelativePath(candidate.destinationUri, false)}`;
     }
 
@@ -492,7 +527,7 @@ export class EditorManager {
       return true;
     }
 
-    if (operation === 'rename') {
+    if (operation === 'rename' || operation === 'copy') {
       return Boolean(edit.newPath);
     }
 
@@ -500,37 +535,12 @@ export class EditorManager {
   }
 
   private async resolveLanguageId(candidate: EditCandidate): Promise<string> {
-    if (candidate.operation === 'update' || candidate.operation === 'delete' || candidate.operation === 'rename') {
+    if (candidate.operation === 'update' || candidate.operation === 'delete' || candidate.operation === 'rename' || candidate.operation === 'copy') {
       const document = await vscode.workspace.openTextDocument(candidate.uri);
       return document.languageId;
     }
 
     return 'plaintext';
-  }
-
-  private isSafeWorkspacePath(pathLike: string): boolean {
-    return !pathLike.startsWith('/')
-      && !pathLike.includes('..')
-      && !/[\*\?\[\]\{\}!]/.test(pathLike);
-  }
-
-  private isProtectedPath(pathLike: string): boolean {
-    const segments = pathLike.split('/').filter(Boolean);
-    const fileName = segments[segments.length - 1] ?? '';
-
-    if (fileName.startsWith('.')) {
-      return true;
-    }
-
-    if (PROTECTED_FILE_NAMES.has(fileName)) {
-      return true;
-    }
-
-    if (/^\.env(\..+)?$/.test(fileName)) {
-      return true;
-    }
-
-    return segments.some((segment) => segment.startsWith('.') || PROTECTED_PATH_SEGMENTS.has(segment));
   }
 
   private async readDiskSnapshot(uri: vscode.Uri): Promise<string> {
