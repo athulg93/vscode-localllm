@@ -1,8 +1,8 @@
 /// <reference lib="dom" />
 
-import { HUMAN_READABLE_SYSTEM_PROMPT, OLLAMA_REQUEST_TIMEOUT_MS } from '../constants';
+import { HUMAN_READABLE_SYSTEM_PROMPT, MAX_COMPLETION_CHECKS, OLLAMA_REQUEST_TIMEOUT_MS } from '../constants';
 import { OllamaChatResponse, OllamaMessage, OllamaShowResponse, OllamaTagResponse } from '../types';
-import { CancellationLike, Logger, ModelProvider, ProviderStatus, ResponseFormat, ToolDefinition } from '../core/contracts';
+import { CancellationLike, ConversationMessage, Logger, ModelProvider, ProviderStatus, ResponseFormat, ToolDefinition } from '../core/contracts';
 import { NdjsonParseError, consumeNdjsonBuffer } from '../core/NdjsonStream';
 import { ModelBehaviorTelemetry } from '../core/ModelBehaviorTelemetry';
 import { ModelBehaviorProfile, resolveModelProfile } from '../core/ModelProfiles';
@@ -11,6 +11,7 @@ import { parseTextToolCall, parseXmlToolCall } from '../core/TextToolCallParser'
 
 type PromptOptions = {
   systemPrompt?: string;
+  conversationHistory?: ConversationMessage[];
   token?: CancellationLike;
   responseFormat?: ResponseFormat;
   onStatus?: ProviderStatus;
@@ -34,6 +35,8 @@ type ToolPromptOptions = PromptOptions & {
   maxToolCalls?: number;
   tools: ToolDefinition[];
 };
+
+type AgentLoopState = 'awaitingModel' | 'executingTools' | 'checkingCompletion' | 'complete';
 
 export class OllamaClient implements ModelProvider {
   constructor(
@@ -113,7 +116,7 @@ export class OllamaClient implements ModelProvider {
     options.onStatus?.(`Sending request to ${model}...`);
     const response = await this.fetchChat(model, temperature, {
       stream: false,
-      messages: this.buildMessages(prompt, options.systemPrompt),
+      messages: this.buildMessages(prompt, options.systemPrompt, options.conversationHistory),
       token: options.token,
       responseFormat: options.responseFormat,
       onStatus: options.onStatus,
@@ -132,6 +135,7 @@ export class OllamaClient implements ModelProvider {
     if (!shouldUseWorkspaceTools(prompt) || !profile.supportsTools) {
       const response = await this.sendPrompt(model, prompt, temperature, {
         systemPrompt: options.systemPrompt,
+        conversationHistory: options.conversationHistory,
         token: options.token,
         onStatus: options.onStatus,
       });
@@ -149,18 +153,25 @@ export class OllamaClient implements ModelProvider {
     const toolPrompt = profile.toolProtocol === 'native' || profile.toolProtocol === 'none'
       ? prompt
       : this.addTextToolInstructions(prompt, options.tools, profile.toolProtocol);
-    const messages: OllamaMessage[] = this.buildMessages(toolPrompt, options.systemPrompt);
+    const messages: OllamaMessage[] = this.buildMessages(toolPrompt, options.systemPrompt, options.conversationHistory);
     const maxToolCalls = options.maxToolCalls ?? 8;
     let toolCallCount = 0;
-    let useTools = true;
+    let completionChecks = 0;
+    let state: AgentLoopState;
 
     while (true) {
+      if (options.token?.isCancellationRequested) {
+        throw new Error('The request was cancelled.');
+      }
+
       this.outputChannel.appendLine(`[Ollama] Sending tool request with model ${model}; prompt length ${prompt.length}; tool calls used ${toolCallCount}.`);
-      options.onStatus?.(toolCallCount === 0 ? 'Inspecting the request and deciding what context is needed...' : 'Preparing the structured edit plan...');
+      options.onStatus?.(toolCallCount === 0 ? 'Inspecting the request and deciding what context is needed...' : 'Continuing the request with the available context...');
+      state = 'awaitingModel';
+      this.outputChannel.appendLine(`[Ollama] Agent state: ${state}.`);
       const response = await this.fetchChat(model, temperature, {
         stream: false,
         messages,
-        tools: profile.toolProtocol === 'native' && useTools ? this.toOllamaTools(options.tools) : undefined,
+        tools: profile.toolProtocol === 'native' ? this.toOllamaTools(options.tools) : undefined,
         token: options.token,
         responseFormat: undefined,
         onStatus: options.onStatus,
@@ -180,9 +191,29 @@ export class OllamaClient implements ModelProvider {
       }
       const toolCalls = nativeToolCalls.length > 0 ? nativeToolCalls : textToolCalls;
       if (toolCalls.length === 0) {
-        return message?.content ?? 'No response returned from Ollama.';
+        const content = message?.content ?? '';
+        const shouldCheckCompletion = completionChecks < MAX_COMPLETION_CHECKS
+          && (completionChecks === 0 || this.isLikelyIncompleteResponse(content));
+        if (shouldCheckCompletion) {
+          completionChecks += 1;
+          state = 'checkingCompletion';
+          this.outputChannel.appendLine(`[Ollama] Agent state: ${state}.`);
+          messages.push({ role: 'assistant', content: message?.content ?? '' });
+          messages.push({
+            role: 'user',
+            content: 'Do not stop at a plan or describe future work. Verify that the original request is fully complete. If workspace or Git evidence is still needed, use the available tools now. Otherwise return only the final answer directly.',
+          });
+          options.onStatus?.(`Checking that the request is fully complete (${completionChecks}/${MAX_COMPLETION_CHECKS})...`);
+          continue;
+        }
+
+        state = 'complete';
+        this.outputChannel.appendLine(`[Ollama] Agent loop completed; tool calls=${toolCallCount}; completion checks=${completionChecks}; state=${state}.`);
+        return content || 'No response returned from Ollama.';
       }
 
+      state = 'executingTools';
+      this.outputChannel.appendLine(`[Ollama] Agent state: ${state}; tool calls=${toolCalls.length}.`);
       messages.push({
         role: 'assistant',
         content: message?.content ?? '',
@@ -205,14 +236,15 @@ export class OllamaClient implements ModelProvider {
         } else {
           messages.push({
             role: 'user',
-            content: `FILE TOOL RESULT:\n${toolResult}\n\nUse this result to answer the original request. Do not call a tool.`,
+            content: `FILE TOOL RESULT:\n${toolResult}\n\nUse this result to continue the original request. Call another tool if more evidence is needed; otherwise return the final answer.`,
           });
-          // The model answered with a text-based tool call instead of the native tool_calls
-          // field, so stop sending the tools schema and rely on the text-based instructions above.
-          useTools = false;
         }
       }
     }
+  }
+
+  private isLikelyIncompleteResponse(content: string): boolean {
+    return /\b(?:i(?:'m| am) going to|i(?:'ll| will)|let me|first,? i|i need to|next,? i)\b[\s\S]*(?:inspect|review|analy[sz]e|check|read|search|look|gather|investigate|continue)/i.test(content);
   }
 
   async streamPrompt(model: string, prompt: string, temperature: number, options: StreamPromptOptions): Promise<string> {
@@ -220,7 +252,7 @@ export class OllamaClient implements ModelProvider {
     options.onStatus?.(`Generating a response with ${model}...`);
     const response = await this.fetchChat(model, temperature, {
       stream: true,
-      messages: this.buildMessages(prompt, options.systemPrompt),
+      messages: this.buildMessages(prompt, options.systemPrompt, options.conversationHistory),
       token: options.token,
       responseFormat: options.responseFormat,
       onStatus: options.onStatus,
@@ -299,9 +331,10 @@ export class OllamaClient implements ModelProvider {
     return responseText;
   }
 
-  private buildMessages(prompt: string, systemPrompt?: string): OllamaMessage[] {
+  private buildMessages(prompt: string, systemPrompt?: string, conversationHistory: ConversationMessage[] = []): OllamaMessage[] {
     return [
       { role: 'system', content: systemPrompt ?? HUMAN_READABLE_SYSTEM_PROMPT },
+      ...conversationHistory,
       { role: 'user', content: prompt },
     ];
   }

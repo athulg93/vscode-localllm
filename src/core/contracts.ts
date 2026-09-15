@@ -13,6 +13,8 @@ export type ChatMessage = {
   toolCalls?: ToolCall[];
 };
 
+export type ConversationMessage = Pick<ChatMessage, 'role' | 'content'>;
+
 export type ToolCall = {
   name: string;
   arguments: Record<string, unknown>;
@@ -33,12 +35,14 @@ export type ModelProvider = {
   ensureModelExists(model: string): Promise<string>;
   sendPrompt(model: string, prompt: string, temperature: number, options?: {
     systemPrompt?: string;
+    conversationHistory?: ConversationMessage[];
     token?: CancellationLike;
     responseFormat?: ResponseFormat;
     onStatus?: ProviderStatus;
   }): Promise<string>;
   streamPrompt(model: string, prompt: string, temperature: number, options: {
     systemPrompt?: string;
+    conversationHistory?: ConversationMessage[];
     token?: CancellationLike;
     onToken: (chunk: string) => void;
     responseFormat?: ResponseFormat;
@@ -46,6 +50,7 @@ export type ModelProvider = {
   }): Promise<string>;
   sendPromptWithTools(model: string, prompt: string, temperature: number, options: {
     systemPrompt?: string;
+    conversationHistory?: ConversationMessage[];
     token?: CancellationLike;
     tools: ToolDefinition[];
     executeTool: (name: string, arguments_: Record<string, unknown>) => Promise<string>;

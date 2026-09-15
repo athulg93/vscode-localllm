@@ -44,6 +44,11 @@ export class ContextManager {
 
   constructor(private readonly outputChannel: Logger) {}
 
+  clearCache(): void {
+    this.cache.clear();
+    this.outputChannel.appendLine('[Context] Context cache cleared.');
+  }
+
   classifyPromptIntent(prompt: string): PromptIntent {
     return classifyPromptIntent(prompt);
   }

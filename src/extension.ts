@@ -9,6 +9,18 @@ import { GitManager } from './services/GitManager';
 import { ModelProvider } from './core/contracts';
 import { ModelBehaviorTelemetry } from './core/ModelBehaviorTelemetry';
 import { modelProfileLabel } from './core/ModelProfiles';
+import { boundConversationHistory, isConversationResetRequest } from './core/ConversationHistory';
+import { ConversationMessage } from './core/contracts';
+
+type ModelChangeRequest = {
+  isRequest: boolean;
+  requestedModel?: string;
+};
+
+type InlineModelDirective = {
+  requestedModel?: string;
+  remainingPrompt: string;
+};
 
 function getSetting<T>(section: string, fallback: T): T {
   const value = vscode.workspace.getConfiguration('localOllama').get<T>(section, fallback);
@@ -95,7 +107,7 @@ async function showModelCapabilities(
   }
 }
 
-function parseModelChangeRequest(prompt: string): { isRequest: boolean; requestedModel?: string } {
+function parseModelChangeRequest(prompt: string): ModelChangeRequest {
   const trimmed = prompt.trim();
   const namedModel = trimmed.match(
     /^(?:please\s+)?(?:change|switch)\s+(?:my\s+|the\s+)?(?:local\s+ollama\s+)?model\s+(?:to|:)\s+([^\s.!?]+)[.!?\s]*$/i,
@@ -111,10 +123,11 @@ function parseModelChangeRequest(prompt: string): { isRequest: boolean; requeste
 
   return {
     isRequest: /^(?:please\s+)?(?:change|switch)\s+(?:my\s+|the\s+)?(?:local\s+ollama\s+)?model[.!?\s]*$/i.test(trimmed),
+    requestedModel: undefined,
   };
 }
 
-function parseInlineModelDirective(prompt: string): { requestedModel?: string; remainingPrompt: string } {
+function parseInlineModelDirective(prompt: string): InlineModelDirective {
   const trimmed = prompt.trim();
   if (trimmed === '@') {
     return { requestedModel: 'models', remainingPrompt: '' };
@@ -122,13 +135,13 @@ function parseInlineModelDirective(prompt: string): { requestedModel?: string; r
 
   const match = trimmed.match(/^@([^\s]+)\s*(.*)$/s);
   if (!match) {
-    return { remainingPrompt: prompt };
+    return { requestedModel: undefined, remainingPrompt: prompt };
   }
 
   const [, requestedModelRaw, remainingPrompt] = match;
   const requestedModel = requestedModelRaw?.trim();
   if (!requestedModel) {
-    return { remainingPrompt: prompt };
+    return { requestedModel: undefined, remainingPrompt: prompt };
   }
 
   return { requestedModel, remainingPrompt: remainingPrompt?.trim() ?? '' };
@@ -169,6 +182,28 @@ function createNotificationStream(outputChannel: vscode.OutputChannel): EditStre
   };
 }
 
+function getConversationHistory(chatContext: vscode.ChatContext): ConversationMessage[] {
+  const history: ConversationMessage[] = [];
+
+  for (const turn of chatContext.history) {
+    if ('prompt' in turn) {
+      history.push({ role: 'user', content: turn.prompt });
+      continue;
+    }
+
+    const content = turn.response
+      .filter((part): part is vscode.ChatResponseMarkdownPart => 'value' in part)
+      .map((part) => part.value.toString())
+      .join('')
+      .trim();
+    if (content) {
+      history.push({ role: 'assistant', content });
+    }
+  }
+
+  return boundConversationHistory(history);
+}
+
 function registerChatParticipant(
   context: vscode.ExtensionContext,
   contextManager: ContextManager,
@@ -179,8 +214,15 @@ function registerChatParticipant(
   outputChannel: ActivityLogger,
   telemetry: ModelBehaviorTelemetry,
 ) {
-  const participant = vscode.chat.createChatParticipant('local-ollama.participant', async (request, _, stream, token) => {
+  const participant = vscode.chat.createChatParticipant('local-ollama.participant', async (request, chatContext, stream, token) => {
     outputChannel.appendLine(`[Chat] Request started; command=${request.command ?? 'none'}, prompt length=${request.prompt.length}.`);
+    const resetConversation = isConversationResetRequest(request.prompt);
+    if (resetConversation) {
+      contextManager.clearCache();
+      outputChannel.appendLine('[Chat] Explicit conversation reset requested; prior turns will be ignored.');
+    }
+    const conversationHistory = resetConversation ? [] : getConversationHistory(chatContext);
+    outputChannel.appendLine(`[Chat] Conversation history prepared; messages=${conversationHistory.length}.`);
     const baseUrl = getSetting<string>('baseUrl', DEFAULT_BASE_URL);
     let defaultModel = getSetting<string>('defaultModel', DEFAULT_MODEL);
     const temperature = getSetting<number>('temperature', DEFAULT_TEMPERATURE);
@@ -280,6 +322,7 @@ function registerChatParticipant(
           contextManager,
           model: resolvedModel,
           prompt: effectivePrompt,
+          conversationHistory,
           temperature,
           stream,
           token,
@@ -328,6 +371,7 @@ function registerChatParticipant(
           contextManager,
           model: resolvedModel,
           prompt: effectivePrompt,
+          conversationHistory,
           temperature,
           stream,
           token,
@@ -336,14 +380,14 @@ function registerChatParticipant(
         return;
       }
 
-      const response = await client.sendPromptWithTools(resolvedModel, [
-        effectivePrompt,
-        '',
-        'You have bounded workspace and Git tools. Use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant line ranges. Use Git tools for repository status, diffs, history, branches, checkout, staging, commits, pushes, and pulls. Never infer Git branches from workspace filenames or file contents; use git_branch. Use git_checkout to switch branches and wait for its confirmation result.',
-        'Use multiple tool calls when needed. Do not claim to have inspected a file unless a tool result provided its content.',
-        'After gathering enough evidence, answer the user directly in concise markdown. Do not return tool-call JSON in the final answer.',
-      ].join('\n'), temperature, {
-        systemPrompt: HUMAN_READABLE_SYSTEM_PROMPT,
+      const response = await client.sendPromptWithTools(resolvedModel, effectivePrompt, temperature, {
+        systemPrompt: [
+          HUMAN_READABLE_SYSTEM_PROMPT,
+          'You have bounded workspace and Git tools. Use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant line ranges. Use Git tools for repository status, diffs, history, branches, checkout, staging, commits, pushes, and pulls. Never infer Git branches from workspace filenames or file contents; use git_branch. Use git_checkout to switch branches and wait for its confirmation result.',
+          'Use multiple tool calls when needed. Do not claim to have inspected a file unless a tool result provided its content.',
+          'Do not stop after describing what you plan to do. Complete the original request in this turn, then answer the user directly in concise markdown. Do not return tool-call JSON in the final answer.',
+        ].join(' '),
+        conversationHistory,
         token,
         tools: [...contextManager.getFileTools(), ...gitManager.getTools()],
         executeTool: async (name, arguments_) => name.startsWith('git_')

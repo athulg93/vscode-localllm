@@ -10,7 +10,7 @@ import { ProposedEditsResponse, ProposedFileEdit } from '../types';
 import { ContextManager } from './ContextManager';
 import { parseEditPlan } from '../core/EditPlanParser';
 import { isProtectedPath, isSafeWorkspacePath } from '../core/PathSafety';
-import { Logger, ModelProvider } from '../core/contracts';
+import { ConversationMessage, Logger, ModelProvider } from '../core/contracts';
 
 /**
  * The subset of `vscode.ChatResponseStream` that EditorManager actually uses.
@@ -32,6 +32,7 @@ type EditWorkflowOptions = {
   stream: EditStream;
   token?: vscode.CancellationToken;
   maxToolCalls?: number;
+  conversationHistory?: ConversationMessage[];
 };
 
 type EditCandidate = {
@@ -140,6 +141,7 @@ export class EditorManager {
   private async proposeEdits(options: EditWorkflowOptions): Promise<ProposedEditsResponse> {
     const toolPrompt = [
       options.prompt,
+      this.formatConversationContext(options.conversationHistory),
       '',
       'Explore before editing: use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant ranges.',
       'You may use multiple tools in sequence. Do not assume you can access the filesystem directly. For an existing file, read the relevant lines before proposing an update.',
@@ -189,6 +191,22 @@ export class EditorManager {
         throw new Error('I could not safely prepare that edit. Please try the request again with a little more detail.');
       }
     }
+  }
+
+  private formatConversationContext(history: ConversationMessage[] | undefined): string {
+    if (!history?.length) {
+      return '';
+    }
+
+    const context = history
+      .map((message) => `${message.role.toUpperCase()}:
+${message.content}`)
+      .join('\n\n');
+    return [
+      'Prior conversation context. Use this only to resolve references such as "it", "that file", or "the previous step".',
+      'The current request below is authoritative. Return the requested edit plan as JSON only.',
+      context,
+    ].join('\n\n');
   }
 
   private async prepareEditCandidates(edits: ProposedFileEdit[]): Promise<EditCandidate[]> {

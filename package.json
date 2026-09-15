@@ -133,7 +133,7 @@
   "scripts": {
     "compile": "tsc -p tsconfig.json",
     "package": "vsce package",
-    "test": "tsx --test src/core/**/*.test.ts",
+    "test": "tsx --test src/core/**/*.test.ts src/services/**/*.test.ts",
     "lint": "eslint .",
     "vscode:prepublish": "npm run compile"
   },
