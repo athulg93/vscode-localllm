@@ -13,6 +13,12 @@ import {
   ChevronRight,
   Terminal,
   RotateCcw,
+  GitPullRequest,
+  GitBranch,
+  GitCommit,
+  Layers,
+  Settings,
+  RefreshCw,
 } from 'lucide-react';
 import { PromptIntent } from '../types';
 import { classifyPromptIntent } from '../core/PromptIntentClassifier';
@@ -39,6 +45,29 @@ interface ChatPanelProps {
   onClearChat?: () => void;
 }
 
+interface SlashCommandDef {
+  name: string;
+  description: string;
+  category: 'Git' | 'Code' | 'Config' | 'System';
+}
+
+const SLASH_COMMANDS: SlashCommandDef[] = [
+  { name: '/pull', description: 'Git pull latest changes from remote repository', category: 'Git' },
+  { name: '/push', description: 'Git push commits to remote repository', category: 'Git' },
+  { name: '/status', description: 'Show repository branch and working-tree status', category: 'Git' },
+  { name: '/diff', description: 'Show bounded working tree or staged diff', category: 'Git' },
+  { name: '/log', description: 'Show recent commit history', category: 'Git' },
+  { name: '/branch', description: 'Show repository branches', category: 'Git' },
+  { name: '/git', description: 'Run custom Git operation (pull, push, diff, log)', category: 'Git' },
+  { name: '/edit', description: 'Propose structured file edits with interactive review', category: 'Code' },
+  { name: '/refactor', description: 'Propose multi-file project refactoring plan', category: 'Code' },
+  { name: '/models', description: 'List available local Ollama models', category: 'Config' },
+  { name: '/change-model', description: 'Change the active default model', category: 'Config' },
+  { name: '/connect', description: 'Configure Ollama base URL and test connection', category: 'Config' },
+  { name: '/clear', description: 'Reset conversation context and start fresh', category: 'System' },
+  { name: '/update', description: 'Check GitHub Releases for newer extension versions', category: 'System' },
+];
+
 export const ChatPanel: React.FC<ChatPanelProps> = ({
   messages,
   onSendMessage,
@@ -49,17 +78,75 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onClearChat,
 }) => {
   const [inputText, setInputText] = useState('');
+  const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
+  // Determine matching slash commands
+  const slashQuery = inputText.startsWith('/') && !inputText.includes(' ') ? inputText.toLowerCase() : null;
+  const filteredSlashCommands = slashQuery
+    ? SLASH_COMMANDS.filter((cmd) => cmd.name.toLowerCase().startsWith(slashQuery))
+    : [];
+
+  useEffect(() => {
+    if (filteredSlashCommands.length > 0) {
+      setShowSlashMenu(true);
+      setSelectedSlashIndex(0);
+    } else {
+      setShowSlashMenu(false);
+    }
+  }, [slashQuery, filteredSlashCommands.length]);
+
+  const selectSlashCommand = (cmd: SlashCommandDef) => {
+    setInputText(`${cmd.name} `);
+    setShowSlashMenu(false);
+    textareaRef.current?.focus();
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim() || isLoading) return;
+    setShowSlashMenu(false);
     onSendMessage(inputText.trim());
     setInputText('');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSlashMenu && filteredSlashCommands.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedSlashIndex((prev) => (prev + 1) % filteredSlashCommands.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedSlashIndex((prev) => (prev - 1 + filteredSlashCommands.length) % filteredSlashCommands.length);
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault();
+        const chosen = filteredSlashCommands[selectedSlashIndex];
+        if (chosen) {
+          selectSlashCommand(chosen);
+          return;
+        }
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setShowSlashMenu(false);
+        return;
+      }
+    }
+
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e);
+    }
   };
 
   const samplePrompts = [
@@ -218,20 +305,59 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       </div>
 
       {/* Input Box */}
-      <form onSubmit={handleSubmit} className="p-3 bg-[#1e1e1e] border-t border-[#333333]">
+      <form onSubmit={handleSubmit} className="relative p-3 bg-[#1e1e1e] border-t border-[#333333]">
+        {/* Slash Command Autocomplete Popover */}
+        {showSlashMenu && filteredSlashCommands.length > 0 && (
+          <div
+            id="slash-commands-popover"
+            className="absolute left-3 right-3 bottom-[calc(100%+4px)] max-h-56 overflow-y-auto bg-[#252526] border border-[#454545] rounded-md shadow-2xl z-50 text-xs py-1"
+          >
+            <div className="px-2.5 py-1 text-[10px] font-semibold text-[#858585] uppercase tracking-wider border-b border-[#333333] flex items-center justify-between">
+              <span>Slash Commands ({filteredSlashCommands.length})</span>
+              <span className="text-[9px] font-normal lowercase text-[#666666]">↑↓ to navigate • Tab/Enter to choose</span>
+            </div>
+            {filteredSlashCommands.map((cmd, idx) => {
+              const isSelected = idx === selectedSlashIndex;
+              return (
+                <button
+                  key={cmd.name}
+                  type="button"
+                  id={`slash-cmd-${cmd.name.replace('/', '')}`}
+                  onClick={() => selectSlashCommand(cmd)}
+                  className={`w-full text-left px-2.5 py-1.5 flex items-center justify-between gap-2 transition-colors ${
+                    isSelected ? 'bg-[#094771] text-white' : 'hover:bg-[#2a2d2e] text-[#cccccc]'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-mono font-semibold text-blue-300">{cmd.name}</span>
+                    <span className="truncate text-[11px] text-[#999999]">{cmd.description}</span>
+                  </div>
+                  <span
+                    className={`text-[9px] px-1.5 py-0.5 rounded font-mono uppercase ${
+                      cmd.category === 'Git'
+                        ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/60'
+                        : cmd.category === 'Code'
+                        ? 'bg-amber-950 text-amber-400 border border-amber-800/60'
+                        : 'bg-neutral-800 text-neutral-400'
+                    }`}
+                  >
+                    {cmd.category}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         <div className="flex flex-col gap-2 bg-[#252526] border border-[#3c3c3c] rounded-lg p-2 focus-within:border-blue-500 transition-colors">
           <textarea
+            ref={textareaRef}
             id="chat-user-input"
             rows={2}
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit(e);
-              }
-            }}
-            placeholder="Ask @local-ollama, /pull, /push, /git, /edit, /refactor..."
+            onKeyDown={handleKeyDown}
+            placeholder="Type / for Git & code commands, or ask @local-ollama..."
             className="w-full bg-transparent text-xs text-white placeholder-[#777777] focus:outline-none resize-none"
           />
 
@@ -239,7 +365,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <div className="flex items-center gap-1 font-mono">
               <span className="text-blue-400">@local-ollama</span>
               <span>•</span>
-              <span>Enter to send</span>
+              <span>Type / for commands</span>
             </div>
 
             {isLoading ? (

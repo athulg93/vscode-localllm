@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "module": "Node16",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "types": ["node", "vscode"],
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "moduleResolution": "Node16",
+    "ignoreDeprecations": "5.0",
+    "noEmitOnError": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "src/extension.ts",
+    "src/constants.ts",
+    "src/types.ts",
+    "src/core/**/*.ts",
+    "src/services/**/*.ts"
+  ]
+}

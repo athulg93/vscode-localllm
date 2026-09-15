@@ -575,7 +575,7 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
           )}
 
           {activeTab === 'updates' && (
-            <UpdatePanel currentVersion="1.3.0" />
+            <UpdatePanel currentVersion="1.3.1" />
           )}
         </div>
 
