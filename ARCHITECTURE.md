@@ -1,32 +1,48 @@
 # Local LLM Architecture
 
-The project is organized around a platform-neutral core and host-specific adapters.
+The project is designed with a platform-neutral architecture to support Local Large Language Models (LLMs) across different IDEs (VS Code, JetBrains, Eclipse) and model providers (Ollama, OpenAI-compatible services).
 
-## Core
+## Core Architecture Breakdown
 
-`src/core/` contains logic that can be reused by VS Code, Eclipse, JetBrains, or another host:
+### 1. Core (`src/core/`)
+Contains pure logic with zero dependencies on specific IDE APIs (no `vscode`, JetBrains, or Eclipse APIs) or specific LLM provider runtimes:
 
-- `PromptIntentClassifier.ts` classifies requests such as analysis, editing, and project operations.
-- `EditPlanParser.ts` parses the structured edit plan returned by a model.
-- `contracts.ts` defines logger, provider-neutral model, tool, chat-message, and cancellation contracts.
+- **Intent & Parsing**:
+  - `PromptIntentClassifier.ts`: Classifies user intent (simple chat, file editing, project-wide refactoring).
+  - `EditPlanParser.ts`: Parses structured model edit plans into validated operations.
+  - `TextToolCallParser.ts`: Extracts tool calls from model outputs across text-based tool protocols.
+- **Safety & Validation**:
+  - `PathSafety.ts`: Ensures workspace-relative paths are valid and prevents directory traversal.
+- **Model Management**:
+  - `ModelProfiles.ts`: Maps model families (Qwen, Llama, Gemma, Mistral, DeepSeek) to their optimal tool-calling protocols and prompt strategies.
+  - `ToolIntentGate.ts`: Context-aware tool gating (e.g. filtering out mutating file tools during casual greeting chats).
+- **Data Handling & Contracts**:
+  - `NdjsonStream.ts`: Handles robust newline-delimited JSON streaming.
+  - `ConversationHistory.ts`: Enforces history bounding and conversation lifecycle resets.
+  - `contracts.ts`: Defines unified, provider-neutral interfaces for messages, tools, cancellation, logging, and model providers.
 
-Core modules do not import VS Code, Ollama, Node.js, or any IDE API.
+### 2. Adapters (`src/services/` & `src/extension.ts`)
+Host-specific and provider-specific implementations (currently VS Code + Ollama):
 
-## Adapters
+- **Context & Editor**:
+  - `ContextManager.ts`: Workspace discovery, file system inspection, and search.
+  - `EditorManager.ts`: Manages UI interactions like previews, diff editors, and user confirmation dialogs.
+- **Provider Integration**:
+  - `OllamaClient.ts`: Manages the specific HTTP/streaming handshake, Ollama tool definitions, and fallbacks.
+- **Git & Safety**:
+  - `GitManager.ts`: Executes Host-authorized Git operations (`git_status`, `git_diff`, `git_log`, `git_branch`, `git_checkout`, `git_add`, `git_commit`, `git_pull`, `git_push`) with user approval prompts for mutating actions.
+- **UI & Lifecycle**:
+  - `extension.ts`: VS Code activation, chat participant registration (`@local-ollama`), commands, and configuration.
+  - `ActivityLogger.ts`: Output channel logging and diagnostic history.
+  - `UpdateManager.ts`: Release checking and VSIX updates.
 
-The current host and provider implementations are retained while the migration proceeds:
+## Key Design Principles
 
-- `src/extension.ts` owns VS Code activation, chat registration, commands, settings, and UI.
-- `src/services/ContextManager.ts` owns VS Code workspace discovery and file reading.
-- `src/services/EditorManager.ts` owns VS Code previews, confirmation dialogs, and workspace edits.
-- `src/services/OllamaClient.ts` owns Ollama HTTP requests and streaming responses.
-- `src/services/ActivityLogger.ts` adapts logging to the VS Code output channel and extension storage.
-- `src/services/UpdateManager.ts` owns VS Code VSIX update behavior.
+1. **Host-Owned Data**:
+   File access, workspace discovery, and Git operations are strictly owned and executed by the Host (e.g., VS Code). The Provider (e.g., Ollama) only provides the intelligence and requests operations through structured tools; it never has direct shell or file access. Mutating actions (staging, commits, checkouts) require explicit host confirmation.
 
-## Future adapters
+2. **Provider-Neutrality**:
+   The core maps provider-specific tool formats and streaming shapes into a unified internal protocol (`contracts.ts`). Whether models emit native JSON tool calls or XML/markdown formatted text blocks, the adapters normalize them before core consumption.
 
-A new provider adapter should implement the model-provider contract and translate its native API into the shared chat and streaming shapes. A new IDE adapter should provide context, editor, settings, logging, and update implementations without changing `src/core/`.
-
-The provider contract includes a tool loop. The core and host expose generic tool definitions such as `read_file`; each provider adapter translates those definitions and its tool-call response format into the provider's native protocol. This keeps file access owned by the host while allowing providers such as Ollama, AnythingLLM, or an OpenAI-compatible service to participate.
-
-The current refactor is intentionally incremental: the existing VS Code/Ollama extension remains usable while pure logic and contracts are extracted for other hosts and local LLM providers.
+3. **Incremental Refactor**:
+   Existing functionality remains fully working while logic is extracted into the shared core to allow seamless expansion to future IDEs (JetBrains, Eclipse) and providers (OpenAI-compatible, LM Studio, vLLM).

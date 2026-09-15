@@ -355,13 +355,28 @@ function registerChatParticipant(
       return;
     }
 
-    // Direct Git command shortcuts (e.g. /git pull, /pull, /push, /git push, /git status)
-    const directGitMatch = effectivePrompt.match(/^\/?(?:git\s+)?(pull|push|status|diff|log|branch)(?:\s+(.*))?$/i);
-    if (directGitMatch) {
-      const gitAction = directGitMatch[1].toLowerCase();
-      const extraArgs = (directGitMatch[2] || '').trim();
+    // Direct Git command shortcuts (handled via VS Code request.command or typed slash command)
+    const isGitCommand = request.command === 'pull' || request.command === 'push' || request.command === 'git' || request.command === 'status';
+    const directGitMatch = effectivePrompt.match(/^\/?(?:git\s+)?(pull|push|status|diff|log|branch|checkout|add|commit)(?:\s+(.*))?$/i);
+
+    if (isGitCommand || directGitMatch) {
+      let gitAction = 'status';
+      let extraArgs = '';
+
+      if (request.command === 'pull' || request.command === 'push' || request.command === 'status') {
+        gitAction = request.command;
+        extraArgs = effectivePrompt.trim();
+      } else if (request.command === 'git') {
+        const parts = effectivePrompt.trim().split(/\s+/);
+        gitAction = parts[0] ? parts[0].toLowerCase() : 'status';
+        extraArgs = parts.slice(1).join(' ').trim();
+      } else if (directGitMatch) {
+        gitAction = directGitMatch[1].toLowerCase();
+        extraArgs = (directGitMatch[2] || '').trim();
+      }
+
       stream.progress(`Executing Git operation: ${gitAction}...`);
-      outputChannel.appendLine(`[Git] Direct slash execution for ${gitAction} with args "${extraArgs}".`);
+      outputChannel.appendLine(`[Git] Direct execution for ${gitAction} with args "${extraArgs}".`);
 
       let toolName = `git_${gitAction}`;
       let toolArgs: Record<string, unknown> = {};
@@ -370,6 +385,12 @@ function registerChatParticipant(
         const parts = extraArgs.split(/\s+/).filter(Boolean);
         if (parts[0]) toolArgs.remote = parts[0];
         if (parts[1]) toolArgs.branch = parts[1];
+      } else if (gitAction === 'checkout') {
+        if (extraArgs) toolArgs.branch = extraArgs;
+      } else if (gitAction === 'add') {
+        if (extraArgs) toolArgs.paths = extraArgs.split(/\s+/).filter(Boolean);
+      } else if (gitAction === 'commit') {
+        if (extraArgs) toolArgs.message = extraArgs;
       }
 
       try {

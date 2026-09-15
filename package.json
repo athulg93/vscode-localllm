@@ -127,15 +127,31 @@
           },
           {
             "name": "pull",
-            "description": "Git pull from upstream or remote repository"
+            "description": "Git pull latest changes from remote repository"
           },
           {
             "name": "push",
-            "description": "Git push commits to upstream or remote repository"
+            "description": "Git push commits to remote repository"
+          },
+          {
+            "name": "status",
+            "description": "Show repository branch and working-tree status"
+          },
+          {
+            "name": "diff",
+            "description": "Show bounded working tree or staged diff"
+          },
+          {
+            "name": "log",
+            "description": "Show recent commit history"
+          },
+          {
+            "name": "branch",
+            "description": "Show repository branches"
           },
           {
             "name": "git",
-            "description": "Run Git operations (pull, push, status, diff, log, branch)"
+            "description": "Run Git operations (pull, push, status, diff, log, branch, checkout, add, commit)"
           }
         ],
         "isSticky": true
