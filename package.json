@@ -124,6 +124,18 @@
           {
             "name": "update",
             "description": "Check GitHub Releases for a newer extension version"
+          },
+          {
+            "name": "pull",
+            "description": "Git pull from upstream or remote repository"
+          },
+          {
+            "name": "push",
+            "description": "Git push commits to upstream or remote repository"
+          },
+          {
+            "name": "git",
+            "description": "Run Git operations (pull, push, status, diff, log, branch)"
           }
         ],
         "isSticky": true
@@ -131,20 +143,28 @@
     ]
   },
   "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 3000",
+    "build": "vite build",
+    "lint": "tsc --noEmit",
     "compile": "tsc -p tsconfig.json",
     "package": "vsce package",
-    "test": "tsx --test src/core/**/*.test.ts src/services/**/*.test.ts",
-    "lint": "eslint .",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22.14.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@types/vscode": "^1.96.0",
+    "@vitejs/plugin-react": "^6.1.1",
     "@vscode/vsce": "^3.9.2",
-    "eslint": "^10.10.0",
-    "tsx": "^4.23.13",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.70.0"
+    "vite": "^8.3.0"
+  },
+  "dependencies": {
+    "lucide-react": "^1.46.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   }
 }

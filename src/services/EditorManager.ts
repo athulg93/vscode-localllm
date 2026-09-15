@@ -36,7 +36,7 @@ type EditWorkflowOptions = {
 };
 
 type EditCandidate = {
-  operation: 'create' | 'update' | 'delete' | 'rename';
+  operation: 'create' | 'update' | 'delete' | 'rename' | 'copy';
   path: string;
   newPath?: string;
   content: string;
@@ -49,7 +49,7 @@ type EditCandidate = {
 type EditValidationResult =
   | {
     ok: true;
-    operation: 'create' | 'update' | 'delete' | 'rename';
+    operation: 'create' | 'update' | 'delete' | 'rename' | 'copy';
     uri: vscode.Uri;
     destinationUri?: vscode.Uri;
     createParentDirectories: vscode.Uri[];
@@ -251,6 +251,13 @@ ${message.content}`)
         workspaceEdit.replace(candidate.uri, this.toFullRange(document), candidate.content);
       } else if (candidate.operation === 'delete') {
         workspaceEdit.deleteFile(candidate.uri, { ignoreIfNotExists: true, recursive: false });
+      } else if (candidate.operation === 'copy') {
+        if (!candidate.destinationUri) {
+          skipped.push(`${candidate.path} (missing copy destination)`);
+          continue;
+        }
+        workspaceEdit.createFile(candidate.destinationUri, { ignoreIfExists: false });
+        workspaceEdit.insert(candidate.destinationUri, new vscode.Position(0, 0), candidate.content);
       } else if (candidate.destinationUri) {
         workspaceEdit.renameFile(candidate.uri, candidate.destinationUri, { overwrite: false, ignoreIfExists: false });
       } else {
@@ -269,7 +276,7 @@ ${message.content}`)
           continue;
         }
 
-        const targetUri = candidate.operation === 'rename' && candidate.destinationUri
+        const targetUri = (candidate.operation === 'rename' || candidate.operation === 'copy') && candidate.destinationUri
           ? candidate.destinationUri
           : candidate.uri;
         const document = await vscode.workspace.openTextDocument(targetUri);
@@ -370,18 +377,18 @@ ${message.content}`)
       return { ok: true, uri: matches[0], operation: 'delete', createParentDirectories: [] };
     }
 
-    if (operation === 'rename') {
+    if (operation === 'rename' || operation === 'copy') {
       const normalizedNewPath = (edit.newPath ?? '').replace(/\\/g, '/');
       if (!normalizedNewPath) {
-        return { ok: false, reason: 'rename requires newPath' };
+        return { ok: false, reason: `${operation} requires newPath` };
       }
 
       if (!isSafeWorkspacePath(normalizedNewPath) || isProtectedPath(normalizedNewPath)) {
-        return { ok: false, reason: 'rename target path is not allowed' };
+        return { ok: false, reason: `${operation} target path is not allowed` };
       }
 
       if (matches.length !== 1) {
-        return { ok: false, reason: 'rename source requires exactly one existing file path' };
+        return { ok: false, reason: `${operation} source requires exactly one existing file path` };
       }
 
       const sourceDocument = await vscode.workspace.openTextDocument(matches[0]);
@@ -392,7 +399,7 @@ ${message.content}`)
       const destinationUri = vscode.Uri.joinPath(workspaceFolder.uri, normalizedNewPath);
       const destinationMatches = await vscode.workspace.findFiles(normalizedNewPath, undefined, 2);
       if (destinationMatches.length > 0) {
-        return { ok: false, reason: 'rename target already exists' };
+        return { ok: false, reason: `${operation} target already exists` };
       }
 
       const parentResolution = await this.resolveMissingParentDirectories(
@@ -408,7 +415,7 @@ ${message.content}`)
         ok: true,
         uri: matches[0],
         destinationUri,
-        operation: 'rename',
+        operation,
         createParentDirectories: parentResolution.directories,
       };
     }
@@ -503,7 +510,7 @@ ${message.content}`)
   }
 
   private describeCandidateTarget(candidate: EditCandidate): string {
-    if (candidate.operation === 'rename' && candidate.destinationUri) {
+    if ((candidate.operation === 'rename' || candidate.operation === 'copy') && candidate.destinationUri) {
       return `${vscode.workspace.asRelativePath(candidate.uri, false)} -> ${vscode.workspace.asRelativePath(candidate.destinationUri, false)}`;
     }
 
@@ -520,7 +527,7 @@ ${message.content}`)
       return true;
     }
 
-    if (operation === 'rename') {
+    if (operation === 'rename' || operation === 'copy') {
       return Boolean(edit.newPath);
     }
 
@@ -528,7 +535,7 @@ ${message.content}`)
   }
 
   private async resolveLanguageId(candidate: EditCandidate): Promise<string> {
-    if (candidate.operation === 'update' || candidate.operation === 'delete' || candidate.operation === 'rename') {
+    if (candidate.operation === 'update' || candidate.operation === 'delete' || candidate.operation === 'rename' || candidate.operation === 'copy') {
       const document = await vscode.workspace.openTextDocument(candidate.uri);
       return document.languageId;
     }

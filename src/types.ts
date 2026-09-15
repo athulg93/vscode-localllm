@@ -29,7 +29,7 @@ export type OllamaToolCall = {
 };
 
 export type ProposedFileEdit = {
-  operation?: 'create' | 'update' | 'delete' | 'rename';
+  operation?: 'create' | 'update' | 'delete' | 'rename' | 'copy';
   path: string;
   newPath?: string;
   content?: string;
@@ -41,12 +41,16 @@ export type ProposedEditsResponse = {
   edits?: ProposedFileEdit[];
 };
 
+export type EditPlan = ProposedEditsResponse;
+export type EditPlanItem = ProposedFileEdit;
+
 export enum PromptIntent {
   General = 'general',
   AnalyzeFile = 'analyzeFile',
   AnalyzeProject = 'analyzeProject',
   EditFile = 'editFile',
   EditProject = 'editProject',
+  GitTransaction = 'gitTransaction',
 }
 
 export type ContextScope = 'none' | 'activeFile' | 'project' | 'paths';

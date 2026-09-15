@@ -23,6 +23,16 @@ test('classifies analysis requests scoped to the whole project', () => {
   assert.equal(classifyPromptIntent('summarize this project'), PromptIntent.AnalyzeProject);
 });
 
+test('classifies git transaction requests', () => {
+  assert.equal(classifyPromptIntent('pull latest changes from origin'), PromptIntent.GitTransaction);
+  assert.equal(classifyPromptIntent('push this branch to github'), PromptIntent.GitTransaction);
+  assert.equal(classifyPromptIntent('git status'), PromptIntent.GitTransaction);
+  assert.equal(classifyPromptIntent('check git diff'), PromptIntent.GitTransaction);
+  assert.equal(classifyPromptIntent('commit changes with message "fix bug"'), PromptIntent.GitTransaction);
+});
+
 test('falls back to general intent when no pattern matches', () => {
   assert.equal(classifyPromptIntent('what is the capital of France?'), PromptIntent.General);
+  assert.equal(classifyPromptIntent('hey how are you'), PromptIntent.General);
+  assert.equal(classifyPromptIntent('hello'), PromptIntent.General);
 });

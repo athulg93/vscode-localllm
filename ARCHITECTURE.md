@@ -8,15 +8,9 @@ The project is organized around a platform-neutral core and host-specific adapte
 
 - `PromptIntentClassifier.ts` classifies requests such as analysis, editing, and project operations.
 - `EditPlanParser.ts` parses the structured edit plan returned by a model.
-- `PathSafety.ts` validates workspace-relative paths (traversal, protected files/directories, text-source extensions) used by both the editing and workspace-exploration workflows.
-- `NdjsonStream.ts` parses newline-delimited JSON chunks from a streaming provider response.
-- `TextToolCallParser.ts` parses a tool call emitted as plain JSON text by models that don't use a native tool-calling response field.
-- `ModelProfiles.ts` resolves model-family capabilities and tool wire-format/message-role strategies.
-- `ToolIntentGate.ts` prevents workspace tools from being offered for greetings and other non-workspace prompts.
-- `ModelBehaviorTelemetry.ts` persists per-model capability and tool-loop outcomes through a host-provided storage contract.
 - `contracts.ts` defines logger, provider-neutral model, tool, chat-message, and cancellation contracts.
 
-Core modules do not import VS Code, Ollama, Node.js, or any IDE API, and are covered by unit tests (`*.test.ts`) runnable with `npm test`.
+Core modules do not import VS Code, Ollama, Node.js, or any IDE API.
 
 ## Adapters
 

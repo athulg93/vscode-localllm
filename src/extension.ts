@@ -355,6 +355,45 @@ function registerChatParticipant(
       return;
     }
 
+    // Direct Git command shortcuts (e.g. /git pull, /pull, /push, /git push, /git status)
+    const directGitMatch = effectivePrompt.match(/^\/?(?:git\s+)?(pull|push|status|diff|log|branch)(?:\s+(.*))?$/i);
+    if (directGitMatch) {
+      const gitAction = directGitMatch[1].toLowerCase();
+      const extraArgs = (directGitMatch[2] || '').trim();
+      stream.progress(`Executing Git operation: ${gitAction}...`);
+      outputChannel.appendLine(`[Git] Direct slash execution for ${gitAction} with args "${extraArgs}".`);
+
+      let toolName = `git_${gitAction}`;
+      let toolArgs: Record<string, unknown> = {};
+
+      if (gitAction === 'pull' || gitAction === 'push') {
+        const parts = extraArgs.split(/\s+/).filter(Boolean);
+        if (parts[0]) toolArgs.remote = parts[0];
+        if (parts[1]) toolArgs.branch = parts[1];
+      }
+
+      try {
+        const rawResult = await gitManager.executeTool(toolName, toolArgs);
+        let parsed: { error?: string; cancelled?: boolean; message?: string } | null = null;
+        try {
+          parsed = JSON.parse(rawResult);
+        } catch {}
+
+        if (parsed?.error) {
+          stream.markdown(`**Git operation failed:**\n\n${parsed.error}`);
+        } else if (parsed?.cancelled) {
+          stream.markdown(`*Git operation was cancelled by the user.*`);
+        } else {
+          stream.markdown(`### Git ${gitAction.toUpperCase()} Result\n\n\`\`\`\n${rawResult}\n\`\`\``);
+        }
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        stream.markdown(`Git execution error: ${msg}`);
+        return;
+      }
+    }
+
     try {
       const resolvedModel = await client.ensureModelExists(defaultModel);
       stream.progress(`Connected to Ollama. Model ${resolvedModel} is available.`);
@@ -380,13 +419,18 @@ function registerChatParticipant(
         return;
       }
 
+      const isGitRequest = promptIntent === 'gitTransaction';
       const response = await client.sendPromptWithTools(resolvedModel, effectivePrompt, temperature, {
         systemPrompt: [
           HUMAN_READABLE_SYSTEM_PROMPT,
-          'You have bounded workspace and Git tools. Use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant line ranges. Use Git tools for repository status, diffs, history, branches, checkout, staging, commits, pushes, and pulls. Never infer Git branches from workspace filenames or file contents; use git_branch. Use git_checkout to switch branches and wait for its confirmation result.',
+          'You have bounded workspace and Git tools.',
+          'IMPORTANT FOR GIT TRANSACTIONS: When the user asks you to perform Git actions (such as pull, push, status, diff, commit, checkout, stage, or check branch), DO NOT provide markdown tutorials, bash instructions, or tell the user to run commands manually in a terminal. You MUST call the corresponding git tool (such as git_pull, git_push, git_status, git_commit, git_diff, git_branch, git_checkout) directly via tool call.',
+          'Use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant line ranges.',
+          'Use Git tools for repository status, diffs, history, branches, checkout, staging, commits, pushes, and pulls. Never infer Git branches from workspace filenames or file contents; use git_branch. Use git_checkout to switch branches and wait for its confirmation result.',
           'Use multiple tool calls when needed. Do not claim to have inspected a file unless a tool result provided its content.',
-          'Do not stop after describing what you plan to do. Complete the original request in this turn, then answer the user directly in concise markdown. Do not return tool-call JSON in the final answer.',
-        ].join(' '),
+          'Do not stop after describing what you plan to do. Complete the original request in this turn, then answer the user directly in concise markdown with the outcome. Do not return tool-call JSON in the final answer.',
+          isGitRequest ? 'CRITICAL: The user has requested a Git transaction. Immediately execute the appropriate git tool.' : '',
+        ].filter(Boolean).join(' '),
         conversationHistory,
         token,
         tools: [...contextManager.getFileTools(), ...gitManager.getTools()],

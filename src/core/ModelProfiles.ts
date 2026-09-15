@@ -16,6 +16,7 @@ const PROFILE_DEFINITIONS: ProfileDefinition[] = [
   { family: 'qwen', pattern: /qwen/i, toolProtocol: 'native', toolResultRole: 'tool' },
   { family: 'gemma', pattern: /gemma/i, toolProtocol: 'native', toolResultRole: 'tool' },
   { family: 'llama', pattern: /llama/i, toolProtocol: 'native', toolResultRole: 'tool' },
+  { family: 'generic', pattern: /(?:mistral|command-r|starcoder|codellama)/i, toolProtocol: 'native', toolResultRole: 'tool' },
 ];
 
 export function registerModelProfile(profile: ProfileDefinition): void {
@@ -27,15 +28,7 @@ export function resolveModelProfile(model: string, advertisedCapabilities?: stri
   const advertisedTools = advertisedCapabilities?.includes('tools') === true;
   const family = definition?.family ?? 'generic';
 
-  if (!advertisedTools) {
-    return {
-      family,
-      toolProtocol: 'none',
-      toolResultRole: 'user',
-      supportsTools: false,
-    };
-  }
-
+  // If the model explicitly disallows tools
   if (definition?.toolProtocol === 'none') {
     return {
       family,
@@ -45,10 +38,32 @@ export function resolveModelProfile(model: string, advertisedCapabilities?: stri
     };
   }
 
+  // If advertised capabilities exist and include 'tools', use native protocol
+  if (advertisedTools) {
+    return {
+      family,
+      toolProtocol: definition?.toolProtocol ?? 'native',
+      toolResultRole: definition?.toolResultRole ?? 'tool',
+      supportsTools: true,
+    };
+  }
+
+  // If capabilities were not reported by Ollama /show (common in older Ollama releases or custom modelfiles),
+  // but the model family is known to support tools natively (qwen, llama, gemma, mistral, etc.), enable native tools.
+  if (definition) {
+    return {
+      family,
+      toolProtocol: definition.toolProtocol,
+      toolResultRole: definition.toolResultRole,
+      supportsTools: true,
+    };
+  }
+
+  // Fallback for unlisted models without explicit tool advertising: allow JSON text tool calling
   return {
     family,
-    toolProtocol: definition?.toolProtocol ?? 'native',
-    toolResultRole: definition?.toolResultRole ?? 'tool',
+    toolProtocol: 'json',
+    toolResultRole: 'user',
     supportsTools: true,
   };
 }

@@ -41,10 +41,10 @@ export const EDIT_PLAN_SYSTEM_PROMPT = [
   'You are a coding assistant that proposes concrete file edits.',
   'Return ONLY valid JSON, no markdown fences, no prose.',
   'JSON schema:',
-  '{"summary":"short summary","edits":[{"operation":"create|update|delete|rename","path":"relative/path","newPath":"relative/path for rename","content":"full file content for create/update","summary":"why"}]}.',
+  '{"summary":"short summary","edits":[{"operation":"create|update|delete|rename|copy","path":"relative/path","newPath":"relative/path for rename/copy","content":"full file content for create/update","summary":"why"}]}.',
   'Prefer editing files provided in context. You may propose new files when the user explicitly asks to create them.',
-  'Use operation=create for new files, update for modifying file contents, delete for removal, and rename for path moves.',
-  'For delete, omit content. For rename, provide newPath and omit content unless the user asked for both rename and content changes.',
+  'Use operation=create for new files, update for modifying file contents, delete for removal, rename for path moves, and copy for duplicating an existing file to newPath.',
+  'For delete, omit content. For rename, provide newPath and omit content unless both rename and edits are needed. For copy, path is the source file and newPath is the destination (content is optional; if omitted, the existing source file content will be copied).',
   'Any new file path must be workspace-relative and must not use .. segments.',
   'Preserve existing style and indentation.',
   `Return at most ${MAX_EDIT_FILES} edits.`
@@ -59,7 +59,7 @@ export const EDIT_PLAN_RESPONSE_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          operation: { type: 'string', enum: ['create', 'update', 'delete', 'rename'] },
+          operation: { type: 'string', enum: ['create', 'update', 'delete', 'rename', 'copy'] },
           path: { type: 'string' },
           newPath: { type: 'string' },
           content: { type: 'string' },
