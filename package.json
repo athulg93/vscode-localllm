@@ -2,7 +2,7 @@
   "name": "local-ollama",
   "displayName": "Local Ollama",
   "description": "Connect VS Code chat to a local Ollama instance and choose from your local models with zero data leakage.",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "publisher": "agovind",
   "license": "MIT",
   "repository": {
@@ -58,8 +58,45 @@
       {
         "command": "localOllama.openActivityLog",
         "title": "Local Ollama: Open Activity Log"
+      },
+      {
+        "command": "localOllama.clearActivityHistory",
+        "title": "Local Ollama: Clear Activity History"
+      },
+      {
+        "command": "localOllama.refreshActivity",
+        "title": "Local Ollama: Refresh Activity"
+      },
+      {
+        "command": "localOllama.reviewPlan",
+        "title": "Local Ollama: Review Proposed Edit Plan"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "local-ollama-activity",
+          "title": "Local Ollama Activity",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "local-ollama-activity": [
+        {
+          "id": "localOllama.pendingDiffsView",
+          "name": "Pending Diffs & Approvals"
+        },
+        {
+          "id": "localOllama.toolCallsView",
+          "name": "Tool Invocations"
+        },
+        {
+          "id": "localOllama.fileReadsView",
+          "name": "Workspace File Reads"
+        }
+      ]
+    },
     "configuration": {
       "title": "Local Ollama",
       "properties": {

@@ -13,6 +13,8 @@ Contains pure logic with zero dependencies on specific IDE APIs (no `vscode`, Je
   - `TextToolCallParser.ts`: Extracts tool calls from model outputs across text-based tool protocols.
 - **Safety & Validation**:
   - `PathSafety.ts`: Ensures workspace-relative paths are valid and prevents directory traversal.
+- **Activity & Diagnostics Tracking**:
+  - `ActivityTracker.ts`: Central pub/sub event store for recording real-time tool calls, workspace file reads with line numbers, and pending diff review states.
 - **Model Management**:
   - `ModelProfiles.ts`: Maps model families (Qwen, Llama, Gemma, Mistral, DeepSeek) to their optimal tool-calling protocols and prompt strategies.
   - `ToolIntentGate.ts`: Context-aware tool gating (e.g. filtering out mutating file tools during casual greeting chats).
@@ -32,7 +34,8 @@ Host-specific and provider-specific implementations (currently VS Code + Ollama)
 - **Git & Safety**:
   - `GitManager.ts`: Executes Host-authorized Git operations (`git_status`, `git_diff`, `git_log`, `git_branch`, `git_checkout`, `git_add`, `git_commit`, `git_pull`, `git_push`) with user approval prompts for mutating actions.
 - **UI & Lifecycle**:
-  - `extension.ts`: VS Code activation, chat participant registration (`@local-ollama`), commands, and configuration.
+  - `extension.ts`: VS Code activation, chat participant registration (`@localllm`), commands, and configuration.
+  - `ActivityViews.ts`: VS Code Tree Data Providers for the dedicated Activity Bar container (`localOllama.pendingDiffsView`, `localOllama.toolCallsView`, `localOllama.fileReadsView`).
   - `ActivityLogger.ts`: Output channel logging and diagnostic history.
   - `UpdateManager.ts`: Release checking and VSIX updates.
 

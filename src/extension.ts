@@ -6,6 +6,12 @@ import { OllamaClient } from './services/OllamaClient';
 import { UpdateManager } from './services/UpdateManager';
 import { ActivityLogger } from './services/ActivityLogger';
 import { GitManager } from './services/GitManager';
+import { ActivityTracker } from './core/ActivityTracker';
+import {
+  FileReadsTreeDataProvider,
+  PendingDiffsTreeDataProvider,
+  ToolCallsTreeDataProvider,
+} from './services/ActivityViews';
 import { ModelProvider } from './core/contracts';
 import { ModelBehaviorTelemetry } from './core/ModelBehaviorTelemetry';
 import { modelProfileLabel } from './core/ModelProfiles';
@@ -484,10 +490,34 @@ export function activate(context: vscode.ExtensionContext) {
   const activityLogger = new ActivityLogger(outputChannel, logDirectory, logUri);
   const telemetry = new ModelBehaviorTelemetry(context.globalState);
   activityLogger.appendLine(`[Lifecycle] Extension activated; version=${context.extension.packageJSON.version ?? 'unknown'}; log=${activityLogger.logPath}.`);
-  const contextManager = new ContextManager(activityLogger);
-  const editorManager = new EditorManager(activityLogger);
+  const activityTracker = new ActivityTracker();
+  const contextManager = new ContextManager(activityLogger, activityTracker);
+  const editorManager = new EditorManager(activityLogger, activityTracker);
   const updateManager = new UpdateManager(activityLogger, context.globalStorageUri);
-  const gitManager = new GitManager(activityLogger);
+  const gitManager = new GitManager(activityLogger, activityTracker);
+
+  const pendingDiffsProvider = new PendingDiffsTreeDataProvider(activityTracker);
+  const toolCallsProvider = new ToolCallsTreeDataProvider(activityTracker);
+  const fileReadsProvider = new FileReadsTreeDataProvider(activityTracker);
+
+  const pendingDiffsView = vscode.window.registerTreeDataProvider('localOllama.pendingDiffsView', pendingDiffsProvider);
+  const toolCallsView = vscode.window.registerTreeDataProvider('localOllama.toolCallsView', toolCallsProvider);
+  const fileReadsView = vscode.window.registerTreeDataProvider('localOllama.fileReadsView', fileReadsProvider);
+
+  const clearActivityCommand = vscode.commands.registerCommand('localOllama.clearActivityHistory', () => {
+    activityTracker.clearHistory();
+    vscode.window.showInformationMessage('Local Ollama activity history cleared.');
+  });
+
+  const refreshActivityCommand = vscode.commands.registerCommand('localOllama.refreshActivity', () => {
+    pendingDiffsProvider.refresh();
+    toolCallsProvider.refresh();
+    fileReadsProvider.refresh();
+  });
+
+  const reviewPlanCommand = vscode.commands.registerCommand('localOllama.reviewPlan', () => {
+    vscode.commands.executeCommand('workbench.view.extension.local-ollama-activity');
+  });
   const extensionPackage = context.extension.packageJSON as { name?: string; publisher?: string; version?: string };
   const extensionId = extensionPackage.publisher && extensionPackage.name
     ? `${extensionPackage.publisher}.${extensionPackage.name}`
@@ -645,6 +675,12 @@ export function activate(context: vscode.ExtensionContext) {
     updateFromWorkspaceCommand,
     updateCommand,
     openActivityLogCommand,
+    pendingDiffsView,
+    toolCallsView,
+    fileReadsView,
+    clearActivityCommand,
+    refreshActivityCommand,
+    reviewPlanCommand,
   );
   registerChatParticipant(context, contextManager, editorManager, updateManager, gitManager, extensionVersion, activityLogger, telemetry);
 }

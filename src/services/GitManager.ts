@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
 import { Logger, ToolDefinition } from '../core/contracts';
+import { ActivityTracker } from '../core/ActivityTracker';
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_CHARS = 12_000;
@@ -10,7 +11,10 @@ const SAFE_NAME = /^[A-Za-z0-9._/-]+$/;
 type GitArguments = Record<string, unknown>;
 
 export class GitManager {
-  constructor(private readonly outputChannel: Logger) {}
+  constructor(
+    private readonly outputChannel: Logger,
+    private readonly activityTracker?: ActivityTracker,
+  ) {}
 
   getTools(): ToolDefinition[] {
     return [
@@ -95,39 +99,61 @@ export class GitManager {
   }
 
   async executeTool(name: string, arguments_: GitArguments): Promise<string> {
+    const startTime = Date.now();
+    let result: string;
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
-      return this.error('No workspace folder is open.');
+      result = this.error('No workspace folder is open.');
+    } else {
+      try {
+        switch (name) {
+          case 'git_status':
+            result = await this.run(workspaceFolder.uri.fsPath, ['status', '--short', '--branch']);
+            break;
+          case 'git_diff':
+            result = await this.run(workspaceFolder.uri.fsPath, ['diff', ...(arguments_.staged === true ? ['--cached'] : [])]);
+            break;
+          case 'git_log':
+            result = await this.run(workspaceFolder.uri.fsPath, ['log', `-${this.toEntryLimit(arguments_.maxEntries)}`, '--oneline', '--decorate']);
+            break;
+          case 'git_branch':
+            result = await this.run(workspaceFolder.uri.fsPath, ['branch', '--all', '--verbose']);
+            break;
+          case 'git_checkout':
+            result = await this.checkout(workspaceFolder.uri.fsPath, arguments_);
+            break;
+          case 'git_add':
+            result = await this.add(workspaceFolder.uri.fsPath, arguments_);
+            break;
+          case 'git_commit':
+            result = await this.commit(workspaceFolder.uri.fsPath, arguments_);
+            break;
+          case 'git_push':
+            result = await this.pushOrPull(workspaceFolder.uri.fsPath, 'push', arguments_);
+            break;
+          case 'git_pull':
+            result = await this.pushOrPull(workspaceFolder.uri.fsPath, 'pull', arguments_);
+            break;
+          default:
+            result = this.error(`Unknown Git tool: ${name}`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.outputChannel.appendLine(`[Git] ${name} failed: ${message}`);
+        result = this.error(message);
+      }
     }
 
-    try {
-      switch (name) {
-        case 'git_status':
-          return this.run(workspaceFolder.uri.fsPath, ['status', '--short', '--branch']);
-        case 'git_diff':
-          return this.run(workspaceFolder.uri.fsPath, ['diff', ...(arguments_.staged === true ? ['--cached'] : [])]);
-        case 'git_log':
-          return this.run(workspaceFolder.uri.fsPath, ['log', `-${this.toEntryLimit(arguments_.maxEntries)}`, '--oneline', '--decorate']);
-        case 'git_branch':
-          return this.run(workspaceFolder.uri.fsPath, ['branch', '--all', '--verbose']);
-        case 'git_checkout':
-          return this.checkout(workspaceFolder.uri.fsPath, arguments_);
-        case 'git_add':
-          return this.add(workspaceFolder.uri.fsPath, arguments_);
-        case 'git_commit':
-          return this.commit(workspaceFolder.uri.fsPath, arguments_);
-        case 'git_push':
-          return this.pushOrPull(workspaceFolder.uri.fsPath, 'push', arguments_);
-        case 'git_pull':
-          return this.pushOrPull(workspaceFolder.uri.fsPath, 'pull', arguments_);
-        default:
-          return this.error(`Unknown Git tool: ${name}`);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.outputChannel.appendLine(`[Git] ${name} failed: ${message}`);
-      return this.error(message);
-    }
+    const durationMs = Math.max(1, Date.now() - startTime);
+    const hasError = result.includes('"error"');
+    this.activityTracker?.recordDirectToolCall(
+      name,
+      arguments_,
+      durationMs,
+      hasError ? 'error' : 'success'
+    );
+
+    return result;
   }
 
   private async add(cwd: string, arguments_: GitArguments): Promise<string> {

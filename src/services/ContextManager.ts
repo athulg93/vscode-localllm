@@ -18,6 +18,7 @@ import { extractJsonBlock } from '../core/EditPlanParser';
 import { isSafeToolReadPath, isTextSourceExtension, normalizeRelativePathPrefix } from '../core/PathSafety';
 import { classifyPromptIntent } from '../core/PromptIntentClassifier';
 import { Logger, ModelProvider, ToolDefinition } from '../core/contracts';
+import { ActivityTracker } from '../core/ActivityTracker';
 import { ContextSelectionResponse, PromptIntent } from '../types';
 
 type ContextBuildOptions = {
@@ -42,7 +43,10 @@ type ContextPlan = {
 export class ContextManager {
   private readonly cache = new Map<string, ContextCacheEntry>();
 
-  constructor(private readonly outputChannel: Logger) {}
+  constructor(
+    private readonly outputChannel: Logger,
+    private readonly activityTracker?: ActivityTracker,
+  ) {}
 
   clearCache(): void {
     this.cache.clear();
@@ -96,18 +100,32 @@ export class ContextManager {
   }
 
   async executeFileTool(name: string, arguments_: Record<string, unknown>): Promise<string> {
+    const startTime = Date.now();
+    let result: string;
+
     if (name === 'list_workspace_files') {
-      return this.listWorkspaceFiles(arguments_);
+      result = await this.listWorkspaceFiles(arguments_);
+    } else if (name === 'search_workspace') {
+      result = await this.searchWorkspace(arguments_);
+    } else if (name === 'read_file') {
+      result = await this.executeReadFile(arguments_);
+    } else {
+      result = JSON.stringify({ error: `Unknown file tool: ${name}` });
     }
 
-    if (name === 'search_workspace') {
-      return this.searchWorkspace(arguments_);
-    }
+    const durationMs = Math.max(1, Date.now() - startTime);
+    const hasError = result.includes('"error"');
+    this.activityTracker?.recordDirectToolCall(
+      name,
+      arguments_,
+      durationMs,
+      hasError ? 'error' : 'success'
+    );
 
-    if (name !== 'read_file') {
-      return JSON.stringify({ error: `Unknown file tool: ${name}` });
-    }
+    return result;
+  }
 
+  private async executeReadFile(arguments_: Record<string, unknown>): Promise<string> {
     const path = typeof arguments_.path === 'string' ? arguments_.path.replace(/\\/g, '/') : '';
     if (!path || !isSafeToolReadPath(path)) {
       return JSON.stringify({ error: 'The requested path is not allowed. Use a workspace-relative text-file path without .. segments.' });
@@ -129,6 +147,16 @@ export class ContextManager {
       const startLine = this.toToolLine(arguments_.startLine, 1);
       const endLine = Math.min(this.toToolLine(arguments_.endLine, startLine + 239), startLine + 239);
       const content = allLines.slice(startLine - 1, endLine).join('\n');
+
+      this.activityTracker?.recordFileRead({
+        path,
+        startLine,
+        endLine,
+        lineCount: allLines.length,
+        charCount: content.length,
+        snippet: allLines.slice(startLine - 1, Math.min(startLine + 2, endLine)).join('\n'),
+      });
+
       return JSON.stringify({ path, startLine, endLine, content });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown file read error.';

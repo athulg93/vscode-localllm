@@ -11,6 +11,7 @@ import { ContextManager } from './ContextManager';
 import { parseEditPlan } from '../core/EditPlanParser';
 import { isProtectedPath, isSafeWorkspacePath } from '../core/PathSafety';
 import { ConversationMessage, Logger, ModelProvider } from '../core/contracts';
+import { ActivityTracker } from '../core/ActivityTracker';
 
 /**
  * The subset of `vscode.ChatResponseStream` that EditorManager actually uses.
@@ -57,7 +58,10 @@ type EditValidationResult =
   | { ok: false; reason: string };
 
 export class EditorManager {
-  constructor(private readonly outputChannel: Logger) {}
+  constructor(
+    private readonly outputChannel: Logger,
+    private readonly activityTracker?: ActivityTracker,
+  ) {}
 
   async runEditWorkflow(options: EditWorkflowOptions): Promise<boolean> {
     options.stream.progress('Understanding the requested file operation...');
@@ -75,6 +79,16 @@ export class EditorManager {
       options.stream.markdown('No concrete edits were proposed. Try a more specific request.');
       return true;
     }
+
+    const planId = this.activityTracker?.setPendingDiff(
+      editPlan.summary || `Proposed Edit Plan (${edits.length} files)`,
+      edits.map((e) => ({
+        path: e.path,
+        operation: (e.operation ?? 'update') as any,
+        newPath: e.newPath,
+        summary: e.summary,
+      })),
+    );
 
     const preview = edits
       .slice(0, MAX_EDIT_FILES)
@@ -104,11 +118,13 @@ export class EditorManager {
 
     const selectedCandidates = await this.collectPerFileDecisions(candidates);
     if (selectedCandidates === undefined) {
+      if (planId) this.activityTracker?.updatePendingDiffStatus(planId, 'discarded');
       options.stream.markdown('Edit plan was discarded.');
       return true;
     }
 
     if (selectedCandidates.length === 0) {
+      if (planId) this.activityTracker?.updatePendingDiffStatus(planId, 'discarded');
       options.stream.markdown('All proposed edits were discarded.');
       return true;
     }
@@ -124,6 +140,9 @@ export class EditorManager {
       .map((candidate) => `${this.describeCandidate(candidate)} (discarded by user)`);
 
     const { applied, skipped } = await this.applyProposedEdits(selectedCandidates);
+    if (planId) {
+      this.activityTracker?.updatePendingDiffStatus(planId, applied.length > 0 ? 'applied' : 'discarded');
+    }
     this.outputChannel.appendLine(`[Edit] Apply completed; applied=${applied.length}, skipped=${skipped.length}.`);
     const combinedSkipped = [...validationSkipped, ...discardedByUser, ...skipped];
     options.stream.markdown([

@@ -7,6 +7,7 @@ import {
 } from '../constants';
 import { ToolDefinition } from '../core/contracts';
 import { INITIAL_WORKSPACE_FILES } from './sampleWorkspace';
+import { globalActivityTracker } from '../core/ActivityTracker';
 
 export interface WorkspaceFileEntry {
   path: string;
@@ -111,16 +112,45 @@ export class WebWorkspace {
   }
 
   async executeTool(name: string, args: Record<string, unknown>): Promise<string> {
+    const startTime = Date.now();
+    let result: string;
     if (name === 'list_workspace_files') {
-      return this.listWorkspaceFiles(args);
+      result = this.listWorkspaceFiles(args);
+    } else if (name === 'search_workspace') {
+      result = this.searchWorkspace(args);
+    } else if (name === 'read_file') {
+      result = this.readFile(args);
+    } else {
+      result = JSON.stringify({ error: `Unknown tool: ${name}` });
     }
-    if (name === 'search_workspace') {
-      return this.searchWorkspace(args);
+
+    const durationMs = Math.max(1, Date.now() - startTime);
+    const hasError = result.includes('"error":');
+    globalActivityTracker.recordDirectToolCall(
+      name,
+      args,
+      durationMs,
+      hasError ? 'error' : 'success'
+    );
+
+    if (name === 'read_file' && !hasError) {
+      try {
+        const parsed = JSON.parse(result);
+        const lines = (parsed.content || '').split('\n');
+        globalActivityTracker.recordFileRead({
+          path: parsed.path,
+          startLine: parsed.startLine,
+          endLine: parsed.endLine,
+          lineCount: lines.length,
+          charCount: (parsed.content || '').length,
+          snippet: lines.slice(0, 3).join('\n'),
+        });
+      } catch {
+        // ignore parse error
+      }
     }
-    if (name === 'read_file') {
-      return this.readFile(args);
-    }
-    return JSON.stringify({ error: `Unknown tool: ${name}` });
+
+    return result;
   }
 
   private listWorkspaceFiles(args: Record<string, unknown>): string {

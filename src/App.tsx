@@ -3,7 +3,7 @@ import { TitleBar } from './components/TitleBar';
 import { ActivityBar, ActiveSidebarTab } from './components/ActivityBar';
 import { ExplorerPanel } from './components/ExplorerPanel';
 import { ChatPanel, ChatMessageItem } from './components/ChatPanel';
-import { LogsPanel } from './components/LogsPanel';
+import { ActivityPanel } from './components/ActivityPanel';
 import { SettingsPanel, ExtensionSettings } from './components/SettingsPanel';
 import { UpdatePanel } from './components/UpdatePanel';
 import { EditorArea } from './components/EditorArea';
@@ -15,6 +15,7 @@ import { WebLogger, LogEntry } from './web/WebLogger';
 import { WebOllamaProvider, SIMULATED_MODELS } from './web/WebOllamaProvider';
 import { classifyPromptIntent } from './core/PromptIntentClassifier';
 import { parseEditPlan } from './core/EditPlanParser';
+import { globalActivityTracker } from './core/ActivityTracker';
 import { EditPlan, EditPlanItem, PromptIntent } from './types';
 import {
   DEFAULT_BASE_URL,
@@ -57,6 +58,7 @@ export function App() {
   const cancellationRef = useRef<AbortController | null>(null);
 
   const [pendingEditPlan, setPendingEditPlan] = useState<EditPlan | null>(null);
+  const [activePlanTrackerId, setActivePlanTrackerId] = useState<string | null>(null);
   const [originalContentsForPlan, setOriginalContentsForPlan] = useState<Record<string, string>>({});
 
   const [messages, setMessages] = useState<ChatMessageItem[]>([
@@ -379,6 +381,16 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
         }
         setOriginalContentsForPlan(originals);
         setPendingEditPlan(parsedPlan);
+        const trackerId = globalActivityTracker.setPendingDiff(
+          parsedPlan.summary || `Proposed Edit Plan (${editCount} files)`,
+          editsList.map((e) => ({
+            path: e.path,
+            operation: e.operation ?? 'update',
+            newPath: e.newPath,
+            summary: e.summary,
+          }))
+        );
+        setActivePlanTrackerId(trackerId);
 
         setMessages((prev) =>
           prev.map((m) =>
@@ -460,6 +472,10 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
 
     setFiles(workspace.getAllFiles());
     setPendingEditPlan(null);
+    if (activePlanTrackerId) {
+      globalActivityTracker.updatePendingDiffStatus(activePlanTrackerId, 'applied');
+      setActivePlanTrackerId(null);
+    }
 
     // Open first edited file in editor
     if (selectedEdits[0]?.path) {
@@ -480,6 +496,10 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
   const handleDiscardEditPlan = () => {
     logger.appendLine('[EditPlan] Discarded proposed edit plan.');
     setPendingEditPlan(null);
+    if (activePlanTrackerId) {
+      globalActivityTracker.updatePendingDiffStatus(activePlanTrackerId, 'discarded');
+      setActivePlanTrackerId(null);
+    }
   };
 
   const handleClearChat = () => {
@@ -558,12 +578,23 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
           )}
 
           {activeTab === 'logs' && (
-            <LogsPanel
+            <ActivityPanel
               logs={logs}
               onClearLogs={() => {
                 logger.clear();
                 setLogs([]);
               }}
+              onOpenFile={(path) => handleSelectFile(path)}
+              onReviewDiff={() => {
+                // If there's an active pending edit plan, the diff modal will be shown
+              }}
+              onApplyPendingDiff={() => {
+                if (pendingEditPlan?.edits) {
+                  handleApplyEditPlan(pendingEditPlan.edits);
+                }
+              }}
+              onDiscardPendingDiff={handleDiscardEditPlan}
+              currentModel={settings.defaultModel}
             />
           )}
 
@@ -578,7 +609,7 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
           )}
 
           {activeTab === 'updates' && (
-            <UpdatePanel currentVersion="1.3.1" />
+            <UpdatePanel currentVersion="1.4.0" />
           )}
         </div>
 

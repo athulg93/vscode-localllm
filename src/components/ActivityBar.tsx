@@ -5,7 +5,8 @@ import {
   Terminal,
   Settings,
   ArrowUpCircle,
-  FolderGit2
+  FolderGit2,
+  Activity,
 } from 'lucide-react';
 
 export type ActiveSidebarTab = 'explorer' | 'chat' | 'logs' | 'settings' | 'updates';
@@ -39,8 +40,8 @@ export const ActivityBar: React.FC<ActivityBarProps> = ({
     },
     {
       id: 'logs',
-      label: 'Output / Activity Log',
-      icon: <Terminal className="w-5 h-5" />,
+      label: 'Agent Activity & Diffs',
+      icon: <Activity className="w-5 h-5" />,
       badge: unreadLogsCount > 0 ? unreadLogsCount : undefined,
     },
     {
