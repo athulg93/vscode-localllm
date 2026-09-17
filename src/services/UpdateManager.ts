@@ -134,11 +134,32 @@ export class UpdateManager {
         await this.runCommand(npmInvocation.command, [...npmInvocation.prefixArgs, 'run', 'compile'], workspacePath);
 
         progress.report({ message: 'Packaging VSIX...' });
-        await this.runCommand(
-          npmInvocation.command,
-          [...npmInvocation.prefixArgs, 'exec', '--', 'vsce', 'package', '--allow-missing-repository', '--skip-license'],
+        const localVsce = path.join(
           workspacePath,
+          'node_modules',
+          '.bin',
+          process.platform === 'win32' ? 'vsce.cmd' : 'vsce',
         );
+
+        try {
+          await this.runCommand(
+            npmInvocation.command,
+            [...npmInvocation.prefixArgs, 'run', 'package'],
+            workspacePath,
+          );
+        } catch (npmError) {
+          this.outputChannel.appendLine('[Update] "npm run package" failed; attempting direct local vsce execution fallback...');
+          try {
+            await this.assertFileExists(localVsce, 'Local vsce binary not found.');
+            await this.runCommand(
+              localVsce,
+              ['package', '--allow-missing-repository', '--skip-license', '--no-dependencies'],
+              workspacePath,
+            );
+          } catch {
+            throw npmError;
+          }
+        }
 
         const vsixPath = path.join(workspacePath, `local-ollama-${workspaceVersion}.vsix`);
         await this.assertFileExists(vsixPath, `Expected VSIX was not produced at ${vsixPath}.`);
@@ -208,10 +229,20 @@ export class UpdateManager {
   }
 
   private async runCommand(command: string, args: string[], cwd: string): Promise<void> {
+    const isWindows = process.platform === 'win32';
+    const isBatchOrCmd = command.endsWith('.cmd') || command.endsWith('.bat');
     this.outputChannel.appendLine(`[Update] Running: ${command} ${args.join(' ')}`);
 
     try {
-      const { stdout, stderr } = await execFileAsync(command, args, { cwd });
+      const { stdout, stderr } = await execFileAsync(command, args, {
+        cwd,
+        shell: isWindows || isBatchOrCmd,
+        windowsHide: true,
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: '1',
+        },
+      });
       if (stdout) {
         this.outputChannel.appendLine(stdout.trim());
       }
@@ -219,16 +250,21 @@ export class UpdateManager {
       if (stderr) {
         this.outputChannel.appendLine(stderr.trim());
       }
-    } catch (error) {
-      const details = error instanceof Error ? error.message : 'Unknown error';
-      this.outputChannel.appendLine(`[Update] Command failed: ${details}`);
-      throw new Error(`Update step failed while running ${args.slice(-2).join(' ')}. Check the Local Ollama output channel.`, { cause: error });
+    } catch (error: any) {
+      const stdout = error?.stdout ? `\nStdout: ${String(error.stdout).trim()}` : '';
+      const stderr = error?.stderr ? `\nStderr: ${String(error.stderr).trim()}` : '';
+      const message = error instanceof Error ? error.message : String(error);
+      this.outputChannel.appendLine(`[Update] Command failed: ${message}${stderr}${stdout}`);
+      const stepSummary = args.length > 0 ? args.join(' ') : command;
+      throw new Error(`Update step failed while running "${stepSummary}": ${error?.stderr?.trim() || error?.message || message}`);
     }
   }
 
   private resolveNpmInvocation(): NpmInvocation {
     const cliPath = process.env.npm_execpath;
-    if (cliPath) {
+    // Only invoke process.execPath if it is actually a Node binary (not VS Code / Code.exe / Electron)
+    const isNodeBinary = process.execPath && /[/\\]node(?:\.exe)?$/i.test(process.execPath);
+    if (cliPath && isNodeBinary) {
       return { command: process.execPath, prefixArgs: [cliPath] };
     }
 

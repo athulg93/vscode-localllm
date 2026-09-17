@@ -75,23 +75,23 @@ export class GitManager {
       },
       {
         name: 'git_push',
-        description: 'Push the current branch to its configured remote, or to a validated remote and branch (supports GitLab and GitHub remotes). This always requires user confirmation.',
+        description: 'Push commits to remote repository (e.g. origin or gitlab) and active or specified branch. Do not pass filler words like "latest" or "changes" as remote or branch.',
         parameters: {
           type: 'object',
           properties: {
-            remote: { type: 'string', description: 'Optional remote name, such as origin or gitlab.' },
-            branch: { type: 'string', description: 'Optional branch name.' },
+            remote: { type: 'string', description: 'Configured Git remote name (e.g. origin, gitlab, upstream). Omit to use configured tracking remote.' },
+            branch: { type: 'string', description: 'Git branch name (e.g. main, 1.4). Omit to use active branch.' },
           },
         },
       },
       {
         name: 'git_pull',
-        description: 'Pull from the configured upstream, or a validated remote and branch (supports GitLab and GitHub remotes). This always requires user confirmation.',
+        description: 'Pull latest commits from remote repository (e.g. origin or gitlab) and active or specified branch. Do not pass filler words like "latest" or "changes" as remote or branch.',
         parameters: {
           type: 'object',
           properties: {
-            remote: { type: 'string', description: 'Optional remote name, such as origin or gitlab.' },
-            branch: { type: 'string', description: 'Optional branch name.' },
+            remote: { type: 'string', description: 'Configured Git remote name (e.g. origin, gitlab, upstream). Omit to use configured tracking remote.' },
+            branch: { type: 'string', description: 'Git branch name (e.g. main, 1.4). Omit to use active branch.' },
           },
         },
       },
@@ -233,12 +233,20 @@ export class GitManager {
     return this.run(cwd, ['checkout', branch]);
   }
 
+  private static readonly FILLER_WORDS = new Set([
+    'latest', 'changes', 'new', 'recent', 'updates', 'update', 'code',
+    'repo', 'repository', 'commits', 'commit', 'all', 'the', 'from',
+    'to', 'in', 'my', 'please', 'now', 'local', 'workspace', 'branch', 'remote'
+  ]);
+
   private async pushOrPull(cwd: string, operation: 'push' | 'pull', arguments_: GitArguments): Promise<string> {
-    const remote = this.getOptionalName(arguments_.remote, 'remote');
-    const branch = this.getOptionalName(arguments_.branch, 'branch');
-    if (remote === null || branch === null) {
+    const rawRemote = this.getOptionalName(arguments_.remote, 'remote');
+    const rawBranch = this.getOptionalName(arguments_.branch, 'branch');
+    if (rawRemote === null || rawBranch === null) {
       return this.error('Remote and branch names may contain only letters, numbers, dots, underscores, slashes, and hyphens.');
     }
+
+    const { remote, branch } = await this.resolveRemoteAndBranch(cwd, rawRemote, rawBranch);
 
     const target = [remote, branch].filter((value): value is string => Boolean(value)).join(' ');
     const approved = await this.confirm(`${operation === 'push' ? 'Push' : 'Pull'} ${target || 'the configured upstream'}?`);
@@ -247,6 +255,61 @@ export class GitManager {
     }
 
     return this.run(cwd, [operation, ...(remote ? [remote] : []), ...(branch ? [branch] : [])]);
+  }
+
+  private async resolveRemoteAndBranch(
+    cwd: string,
+    rawRemote?: string,
+    rawBranch?: string,
+  ): Promise<{ remote?: string; branch?: string }> {
+    let cleanRemote = rawRemote?.trim() || undefined;
+    let cleanBranch = rawBranch?.trim() || undefined;
+
+    if (cleanRemote && GitManager.FILLER_WORDS.has(cleanRemote.toLowerCase())) {
+      this.outputChannel.appendLine(`[Git] Filtered out natural-language filler remote: "${cleanRemote}".`);
+      cleanRemote = undefined;
+    }
+
+    if (cleanBranch && GitManager.FILLER_WORDS.has(cleanBranch.toLowerCase())) {
+      this.outputChannel.appendLine(`[Git] Filtered out natural-language filler branch: "${cleanBranch}".`);
+      cleanBranch = undefined;
+    }
+
+    // Check configured remotes
+    let configuredRemotes: string[] = [];
+    try {
+      const remoteRes = await this.run(cwd, ['remote']);
+      if (remoteRes && remoteRes !== 'Git operation completed successfully.') {
+        configuredRemotes = remoteRes.split(/\r?\n/).map((r) => r.trim()).filter(Boolean);
+      }
+    } catch {
+      // Ignored
+    }
+
+    if (cleanRemote && !configuredRemotes.includes(cleanRemote)) {
+      // Check if cleanRemote is actually a known branch (e.g. user ran "git pull 1.4" or "git pull main")
+      let isBranch = false;
+      try {
+        const branchRes = await this.run(cwd, ['branch', '-a']);
+        if (branchRes) {
+          const branchLines = branchRes.split(/\r?\n/).map((b) => b.replace(/^[*+\s]+/, '').trim());
+          isBranch = branchLines.some((b) => b === cleanRemote || b.endsWith(`/${cleanRemote}`));
+        }
+      } catch {
+        // Ignored
+      }
+
+      if (isBranch && !cleanBranch) {
+        this.outputChannel.appendLine(`[Git] Argument "${cleanRemote}" detected as a branch name rather than a remote; using as branch.`);
+        cleanBranch = cleanRemote;
+        cleanRemote = undefined;
+      } else if (!isBranch && configuredRemotes.length > 0) {
+        this.outputChannel.appendLine(`[Git] Remote "${cleanRemote}" is not in configured remotes [${configuredRemotes.join(', ')}]; omitting.`);
+        cleanRemote = undefined;
+      }
+    }
+
+    return { remote: cleanRemote, branch: cleanBranch };
   }
 
   private async remote(cwd: string): Promise<string> {

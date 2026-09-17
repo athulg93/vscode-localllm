@@ -234,7 +234,7 @@
     "build": "vite build",
     "lint": "tsc --noEmit",
     "compile": "tsc -p tsconfig.extension.json",
-    "package": "vsce package --no-dependencies",
+    "package": "vsce package --allow-missing-repository --skip-license --no-dependencies",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {

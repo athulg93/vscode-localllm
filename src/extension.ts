@@ -403,8 +403,14 @@ function registerChatParticipant(
 
       if (gitAction === 'pull' || gitAction === 'push') {
         const parts = extraArgs.split(/\s+/).filter(Boolean);
-        if (parts[0]) toolArgs.remote = parts[0];
-        if (parts[1]) toolArgs.branch = parts[1];
+        const fillerWords = new Set([
+          'latest', 'changes', 'new', 'recent', 'updates', 'update', 'code',
+          'repo', 'repository', 'commits', 'commit', 'all', 'the', 'from',
+          'to', 'in', 'my', 'please', 'now', 'local', 'workspace', 'branch', 'remote',
+        ]);
+        const cleanParts = parts.filter((p) => !fillerWords.has(p.toLowerCase()));
+        if (cleanParts[0]) toolArgs.remote = cleanParts[0];
+        if (cleanParts[1]) toolArgs.branch = cleanParts[1];
       } else if (gitAction === 'checkout' || gitAction === 'merge') {
         if (extraArgs) toolArgs.branch = extraArgs;
       } else if (gitAction === 'add') {
