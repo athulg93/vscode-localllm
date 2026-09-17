@@ -233,6 +233,15 @@ export class UpdateManager {
     const isBatchOrCmd = command.endsWith('.cmd') || command.endsWith('.bat');
     this.outputChannel.appendLine(`[Update] Running: ${command} ${args.join(' ')}`);
 
+    const pathKey = isWindows ? 'Path' : 'PATH';
+    const currentPath = process.env[pathKey] || process.env.PATH || '';
+    const nodeModulesBin = path.join(cwd, 'node_modules', '.bin');
+    const pathDelimiter = path.delimiter;
+    const additionalPaths = isWindows
+      ? [nodeModulesBin]
+      : [nodeModulesBin, '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin'];
+    const enrichedPath = [...additionalPaths, currentPath].filter(Boolean).join(pathDelimiter);
+
     try {
       const { stdout, stderr } = await execFileAsync(command, args, {
         cwd,
@@ -240,6 +249,8 @@ export class UpdateManager {
         windowsHide: true,
         env: {
           ...process.env,
+          [pathKey]: enrichedPath,
+          PATH: enrichedPath,
           ELECTRON_RUN_AS_NODE: '1',
         },
       });

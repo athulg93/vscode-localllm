@@ -235,6 +235,7 @@
     "lint": "tsc --noEmit",
     "compile": "tsc -p tsconfig.extension.json",
     "package": "vsce package --allow-missing-repository --skip-license --no-dependencies",
+    "install-extension": "npm run package && code --install-extension local-ollama-1.4.0.vsix --force",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
