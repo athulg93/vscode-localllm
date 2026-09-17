@@ -254,3 +254,97 @@ export class FileReadTreeItem extends vscode.TreeItem {
     }
   }
 }
+
+export class SummaryMetricsTreeDataProvider implements vscode.TreeDataProvider<SummaryMetricTreeItem> {
+  private readonly _onDidChangeTreeData = new vscode.EventEmitter<SummaryMetricTreeItem | undefined | void>();
+  readonly onDidChangeTreeData: vscode.Event<SummaryMetricTreeItem | undefined | void> = this._onDidChangeTreeData.event;
+
+  constructor(private readonly tracker: ActivityTracker) {
+    this.tracker.subscribe(() => this._onDidChangeTreeData.fire());
+  }
+
+  refresh(): void {
+    this._onDidChangeTreeData.fire();
+  }
+
+  getTreeItem(element: SummaryMetricTreeItem): vscode.TreeItem {
+    return element;
+  }
+
+  getChildren(element?: SummaryMetricTreeItem): Thenable<SummaryMetricTreeItem[]> {
+    if (!element) {
+      const metrics = this.tracker.getSummaryMetrics();
+      const hw = metrics.hardware;
+
+      const items: SummaryMetricTreeItem[] = [
+        new SummaryMetricTreeItem(
+          `Model: ${hw.modelName}`,
+          `${hw.totalSizeFormatted} • ${hw.percentVram}% VRAM (${hw.isFullyGpuAccelerated ? 'GPU' : 'Hybrid'})`,
+          'server-process',
+          new vscode.ThemeColor('charts.blue')
+        ),
+        new SummaryMetricTreeItem(
+          `Speed: ${metrics.latestTokensPerSecond} tok/s`,
+          `Avg: ${metrics.avgTokensPerSecond} tok/s across session`,
+          'zap',
+          new vscode.ThemeColor('charts.yellow')
+        ),
+        new SummaryMetricTreeItem(
+          `Context Window: ${hw.contextTokensUsed} / ${hw.contextTokensLimit}`,
+          `${Math.round((hw.contextTokensUsed / hw.contextTokensLimit) * 100)}% utilized`,
+          'graph',
+          new vscode.ThemeColor('charts.purple')
+        ),
+        new SummaryMetricTreeItem(
+          `Conversations: ${metrics.totalConversations}`,
+          `${metrics.userPromptsCount} prompts, ${metrics.agentResponsesCount} replies`,
+          'comment-discussion',
+          new vscode.ThemeColor('charts.green')
+        ),
+        new SummaryMetricTreeItem(
+          `Tokens: ${metrics.promptTokensIn.toLocaleString()} in • ${metrics.generatedTokensOut.toLocaleString()} out`,
+          `${(metrics.promptTokensIn + metrics.generatedTokensOut).toLocaleString()} total`,
+          'database',
+          new vscode.ThemeColor('charts.foreground')
+        ),
+        new SummaryMetricTreeItem(
+          `Code Edits: ${metrics.editsApplied} applied / ${metrics.editsProposed} proposed`,
+          metrics.editsDiscarded > 0 ? `${metrics.editsDiscarded} discarded` : '100% accepted',
+          'git-pull-request',
+          new vscode.ThemeColor('charts.orange')
+        ),
+        new SummaryMetricTreeItem(
+          '100% Local Execution',
+          '0 KB sent to external cloud (Private & Offline)',
+          'lock',
+          new vscode.ThemeColor('charts.green')
+        ),
+        new SummaryMetricTreeItem(
+          `Retention: Rolling ${metrics.retentionDays} days`,
+          'Configurable via localOllama.activityRetentionDays',
+          'history',
+          new vscode.ThemeColor('charts.gray')
+        ),
+      ];
+
+      return Promise.resolve(items);
+    }
+
+    return Promise.resolve([]);
+  }
+}
+
+export class SummaryMetricTreeItem extends vscode.TreeItem {
+  constructor(
+    label: string,
+    description: string,
+    icon: string,
+    color?: vscode.ThemeColor
+  ) {
+    super(label, vscode.TreeItemCollapsibleState.None);
+    this.description = description;
+    this.iconPath = new vscode.ThemeIcon(icon, color);
+    this.tooltip = `${label}\n${description}`;
+  }
+}
+

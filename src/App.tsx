@@ -265,7 +265,7 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
     }
 
     // Direct Git command shortcuts in interactive preview
-    const directGitMatch = text.match(/^\/?(?:git\s+)?(pull|push|status|diff|log|branch)(?:\s+(.*))?$/i);
+    const directGitMatch = text.match(/^\/?(?:git[\s-])?(pull|push|status|diff|log|branch|remote|merge|checkout|add|commit)(?:\s+(.*))?$/i);
     if (directGitMatch) {
       const gitAction = directGitMatch[1].toLowerCase();
       const extraArgs = (directGitMatch[2] || '').trim();
@@ -273,11 +273,22 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
       
       let gitOutput = '';
       if (gitAction === 'status') {
-        gitOutput = `On branch main\nYour branch is up to date with 'origin/main'.\n\nChanges not staged for commit:\n  (use "git add <file>..." to update what will be committed)\n\tnominal modifications in src/auth/AuthService.ts\n\nno changes added to commit (use "git add")`;
+        gitOutput = `On branch main\nYour branch is up to date with 'origin/main'.\n\nChanges not staged for commit:\n  (use "git add <file>..." to update what will be committed)\n\tmodified:   src/auth/AuthService.ts\n\nno changes added to commit (use "git add")`;
       } else if (gitAction === 'pull') {
-        gitOutput = `Updating 4a19c3b..8f2b10e\nFast-forward\n src/auth/AuthService.ts | 12 +++++++++++-\n 1 file changed, 11 insertions(+), 1 deletion(-)\nSuccessfully pulled latest changes from origin/main.`;
+        gitOutput = `Updating 4a19c3b..8f2b10e\nFast-forward\n src/auth/AuthService.ts | 12 +++++++++++-\n 1 file changed, 11 insertions(+), 1 deletion(-)\nSuccessfully pulled latest changes from ${extraArgs || 'origin/main'}.`;
       } else if (gitAction === 'push') {
-        gitOutput = `Enumerating objects: 7, done.\nCounting objects: 100% (7/7), done.\nWriting objects: 100% (4/4), 842 bytes | 842.00 KiB/s, done.\nTotal 4 (delta 2), reused 0 (delta 0)\nTo https://github.com/athulg93/vscode-localllm.git\n   8f2b10e..9c34a1b  main -> main\nBranch 'main' set up to track remote branch 'main' from 'origin'.`;
+        gitOutput = `Enumerating objects: 7, done.\nCounting objects: 100% (7/7), done.\nWriting objects: 100% (4/4), 842 bytes | 842.00 KiB/s, done.\nTotal 4 (delta 2), reused 0 (delta 0)\nTo ${extraArgs || 'origin/main'} (remote repository updated)\n   8f2b10e..9c34a1b  main -> main\nBranch 'main' set up to track remote branch 'main' from 'origin'.`;
+      } else if (gitAction === 'remote') {
+        gitOutput = `Configured Git Remotes [Detected Providers: GitLab, GitHub]:\n\norigin\thttps://gitlab.com/workspace/localllm-repo.git (fetch)\norigin\thttps://gitlab.com/workspace/localllm-repo.git (push)\nupstream\thttps://github.com/athulg93/vscode-localllm.git (fetch)\nupstream\thttps://github.com/athulg93/vscode-localllm.git (push)`;
+      } else if (gitAction === 'merge') {
+        const branchToMerge = extraArgs || 'feature/auth-hardening';
+        gitOutput = `Updating 8f2b10e..9c34a1b\nFast-forward\n src/auth/AuthService.ts | 18 +++++++++++++++++-\n 1 file changed, 17 insertions(+), 1 deletion(-)\nMerged branch "${branchToMerge}" into main.`;
+      } else if (gitAction === 'checkout') {
+        gitOutput = `Switched to branch '${extraArgs || 'main'}'\nYour branch is up to date with 'origin/${extraArgs || 'main'}'.`;
+      } else if (gitAction === 'commit') {
+        gitOutput = `[main 9c34a1b] ${extraArgs || 'feat: update workspace configuration'}\n 1 file changed, 14 insertions(+), 2 deletions(-)`;
+      } else if (gitAction === 'add') {
+        gitOutput = `Staged ${extraArgs || 'all modified files'} for commit.`;
       } else if (gitAction === 'diff') {
         gitOutput = `diff --git a/src/auth/AuthService.ts b/src/auth/AuthService.ts\nindex 8f2b10e..9c34a1b 100644\n--- a/src/auth/AuthService.ts\n+++ b/src/auth/AuthService.ts\n@@ -12,3 +12,6 @@\n+    // Rate limit check\n+    if (this.failedAttempts >= 5) throw new Error('Locked');`;
       } else if (gitAction === 'branch') {

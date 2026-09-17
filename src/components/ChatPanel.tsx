@@ -51,21 +51,46 @@ interface SlashCommandDef {
   category: 'Git' | 'Code' | 'Config' | 'System';
 }
 
+interface GitSubcommandDef {
+  name: string;
+  description: string;
+  argsHint?: string;
+}
+
 const SLASH_COMMANDS: SlashCommandDef[] = [
-  { name: '/pull', description: 'Git pull latest changes from remote repository', category: 'Git' },
-  { name: '/push', description: 'Git push commits to remote repository', category: 'Git' },
-  { name: '/status', description: 'Show repository branch and working-tree status', category: 'Git' },
-  { name: '/diff', description: 'Show bounded working tree or staged diff', category: 'Git' },
-  { name: '/log', description: 'Show recent commit history', category: 'Git' },
-  { name: '/branch', description: 'Show repository branches', category: 'Git' },
-  { name: '/git', description: 'Run custom Git operation (pull, push, diff, log)', category: 'Git' },
+  { name: '/git', description: 'Run Git operations (interactive subcommands)', category: 'Git' },
+  { name: '/git-status', description: 'Show Git status and current branch', category: 'Git' },
+  { name: '/git-push', description: 'Push commits to GitLab or GitHub remote', category: 'Git' },
+  { name: '/git-pull', description: 'Pull latest changes from GitLab or GitHub remote', category: 'Git' },
+  { name: '/git-remote', description: 'Inspect remotes and detect GitLab / GitHub hosts', category: 'Git' },
+  { name: '/git-merge', description: 'Merge a branch into the active branch', category: 'Git' },
+  { name: '/git-diff', description: 'Show bounded working tree diff', category: 'Git' },
+  { name: '/git-commit', description: 'Commit staged changes with message', category: 'Git' },
+  { name: '/git-branch', description: 'Show local and remote branches', category: 'Git' },
+  { name: '/git-checkout', description: 'Switch to an existing local branch', category: 'Git' },
+  { name: '/git-add', description: 'Stage workspace files for commit', category: 'Git' },
+  { name: '/git-log', description: 'Show recent commit log', category: 'Git' },
   { name: '/edit', description: 'Propose structured file edits with interactive review', category: 'Code' },
   { name: '/refactor', description: 'Propose multi-file project refactoring plan', category: 'Code' },
   { name: '/models', description: 'List available local Ollama models', category: 'Config' },
   { name: '/change-model', description: 'Change the active default model', category: 'Config' },
   { name: '/connect', description: 'Configure Ollama base URL and test connection', category: 'Config' },
   { name: '/clear', description: 'Reset conversation context and start fresh', category: 'System' },
-  { name: '/update', description: 'Check GitHub Releases for newer extension versions', category: 'System' },
+  { name: '/update', description: 'Check extension updates (GitHub Releases)', category: 'System' },
+];
+
+const GIT_SUBCOMMANDS: GitSubcommandDef[] = [
+  { name: 'status', description: 'Show working tree status and branch' },
+  { name: 'diff', description: 'Show bounded working tree or staged diff', argsHint: '[--staged]' },
+  { name: 'log', description: 'Show recent commit history' },
+  { name: 'branch', description: 'Show repository branches' },
+  { name: 'pull', description: 'Pull latest changes from GitLab or GitHub remote', argsHint: '[remote] [branch]' },
+  { name: 'push', description: 'Push commits to GitLab or GitHub remote', argsHint: '[remote] [branch]' },
+  { name: 'remote', description: 'Inspect remotes and detect GitLab / GitHub hosts' },
+  { name: 'merge', description: 'Merge an existing branch into current branch', argsHint: '<branch>' },
+  { name: 'checkout', description: 'Switch to an existing branch', argsHint: '<branch>' },
+  { name: 'add', description: 'Stage specific workspace files for commit', argsHint: '<paths...>' },
+  { name: 'commit', description: 'Commit staged changes with message', argsHint: '<message>' },
 ];
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -87,23 +112,44 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  // Determine matching slash commands
-  const slashQuery = inputText.startsWith('/') && !inputText.includes(' ') ? inputText.toLowerCase() : null;
-  const filteredSlashCommands = slashQuery
-    ? SLASH_COMMANDS.filter((cmd) => cmd.name.toLowerCase().startsWith(slashQuery))
+  // Determine matching commands: either root slash commands or /git subcommands
+  const isGitSubQuery = inputText.startsWith('/git ') && inputText.trim().split(/\s+/).length <= 2 && !inputText.endsWith('  ');
+  const isRootSlashQuery = inputText.startsWith('/') && !inputText.includes(' ');
+
+  const gitSubPrefix = isGitSubQuery ? inputText.slice(5).trim().toLowerCase() : '';
+  const filteredGitSubcommands = isGitSubQuery
+    ? GIT_SUBCOMMANDS.filter((sc) => sc.name.toLowerCase().startsWith(gitSubPrefix))
     : [];
 
+  const slashPrefix = isRootSlashQuery ? inputText.toLowerCase() : '';
+  const filteredSlashCommands = isRootSlashQuery
+    ? SLASH_COMMANDS.filter((cmd) => cmd.name.toLowerCase().startsWith(slashPrefix))
+    : [];
+
+  const activeMenuCount = isGitSubQuery ? filteredGitSubcommands.length : filteredSlashCommands.length;
+
   useEffect(() => {
-    if (filteredSlashCommands.length > 0) {
+    if (activeMenuCount > 0) {
       setShowSlashMenu(true);
       setSelectedSlashIndex(0);
     } else {
       setShowSlashMenu(false);
     }
-  }, [slashQuery, filteredSlashCommands.length]);
+  }, [isGitSubQuery, activeMenuCount]);
 
   const selectSlashCommand = (cmd: SlashCommandDef) => {
-    setInputText(`${cmd.name} `);
+    if (cmd.name === '/git') {
+      setInputText('/git ');
+    } else {
+      setInputText(`${cmd.name} `);
+    }
+    setShowSlashMenu(false);
+    textareaRef.current?.focus();
+  };
+
+  const selectGitSubcommand = (sc: GitSubcommandDef) => {
+    const trailingSpace = sc.argsHint ? ' ' : '';
+    setInputText(`/git ${sc.name}${trailingSpace}`);
     setShowSlashMenu(false);
     textareaRef.current?.focus();
   };
@@ -117,24 +163,27 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (showSlashMenu && filteredSlashCommands.length > 0) {
+    if (showSlashMenu && activeMenuCount > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setSelectedSlashIndex((prev) => (prev + 1) % filteredSlashCommands.length);
+        setSelectedSlashIndex((prev) => (prev + 1) % activeMenuCount);
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setSelectedSlashIndex((prev) => (prev - 1 + filteredSlashCommands.length) % filteredSlashCommands.length);
+        setSelectedSlashIndex((prev) => (prev - 1 + activeMenuCount) % activeMenuCount);
         return;
       }
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
         e.preventDefault();
-        const chosen = filteredSlashCommands[selectedSlashIndex];
-        if (chosen) {
-          selectSlashCommand(chosen);
-          return;
+        if (isGitSubQuery) {
+          const chosenSub = filteredGitSubcommands[selectedSlashIndex];
+          if (chosenSub) selectGitSubcommand(chosenSub);
+        } else {
+          const chosen = filteredSlashCommands[selectedSlashIndex];
+          if (chosen) selectSlashCommand(chosen);
         }
+        return;
       }
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -150,9 +199,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   };
 
   const samplePrompts = [
+    { label: '/git status', text: '@localllm /git status' },
+    { label: '/git diff', text: '@localllm /git diff' },
     { label: '/git pull', text: '@localllm /git pull' },
     { label: '/git push', text: '@localllm /git push' },
-    { label: 'git status', text: '@localllm check git status' },
     { label: '/edit Input Validation', text: '@localllm /edit Add password length validation and account lockout to AuthService' },
     { label: '/refactor Health Check', text: '@localllm /refactor Add health check endpoint and error wrapper in routes.ts' },
     { label: '/models', text: '@localllm /models' },
@@ -306,46 +356,75 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
       {/* Input Box */}
       <form onSubmit={handleSubmit} className="relative p-3 bg-[#1e1e1e] border-t border-[#333333]">
-        {/* Slash Command Autocomplete Popover */}
-        {showSlashMenu && filteredSlashCommands.length > 0 && (
+        {/* Slash Command / Git Subcommand Autocomplete Popover */}
+        {showSlashMenu && activeMenuCount > 0 && (
           <div
             id="slash-commands-popover"
-            className="absolute left-3 right-3 bottom-[calc(100%+4px)] max-h-56 overflow-y-auto bg-[#252526] border border-[#454545] rounded-md shadow-2xl z-50 text-xs py-1"
+            className="absolute left-3 right-3 bottom-[calc(100%+4px)] max-h-60 overflow-y-auto bg-[#252526] border border-[#454545] rounded-md shadow-2xl z-50 text-xs py-1"
           >
             <div className="px-2.5 py-1 text-[10px] font-semibold text-[#858585] uppercase tracking-wider border-b border-[#333333] flex items-center justify-between">
-              <span>Slash Commands ({filteredSlashCommands.length})</span>
+              <span>
+                {isGitSubQuery ? `Git Subcommands (${filteredGitSubcommands.length})` : `Slash Commands (${filteredSlashCommands.length})`}
+              </span>
               <span className="text-[9px] font-normal lowercase text-[#666666]">↑↓ to navigate • Tab/Enter to choose</span>
             </div>
-            {filteredSlashCommands.map((cmd, idx) => {
-              const isSelected = idx === selectedSlashIndex;
-              return (
-                <button
-                  key={cmd.name}
-                  type="button"
-                  id={`slash-cmd-${cmd.name.replace('/', '')}`}
-                  onClick={() => selectSlashCommand(cmd)}
-                  className={`w-full text-left px-2.5 py-1.5 flex items-center justify-between gap-2 transition-colors ${
-                    isSelected ? 'bg-[#094771] text-white' : 'hover:bg-[#2a2d2e] text-[#cccccc]'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="font-mono font-semibold text-blue-300">{cmd.name}</span>
-                    <span className="truncate text-[11px] text-[#999999]">{cmd.description}</span>
-                  </div>
-                  <span
-                    className={`text-[9px] px-1.5 py-0.5 rounded font-mono uppercase ${
-                      cmd.category === 'Git'
-                        ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/60'
-                        : cmd.category === 'Code'
-                        ? 'bg-amber-950 text-amber-400 border border-amber-800/60'
-                        : 'bg-neutral-800 text-neutral-400'
+
+            {isGitSubQuery ? (
+              filteredGitSubcommands.map((sub, idx) => {
+                const isSelected = idx === selectedSlashIndex;
+                return (
+                  <button
+                    key={sub.name}
+                    type="button"
+                    id={`git-subcmd-${sub.name}`}
+                    onClick={() => selectGitSubcommand(sub)}
+                    className={`w-full text-left px-2.5 py-1.5 flex items-center justify-between gap-2 transition-colors ${
+                      isSelected ? 'bg-[#094771] text-white' : 'hover:bg-[#2a2d2e] text-[#cccccc]'
                     }`}
                   >
-                    {cmd.category}
-                  </span>
-                </button>
-              );
-            })}
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-mono font-semibold text-emerald-400">/git {sub.name}</span>
+                      {sub.argsHint && <span className="font-mono text-[10px] text-[#777777]">{sub.argsHint}</span>}
+                      <span className="truncate text-[11px] text-[#999999]">{sub.description}</span>
+                    </div>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded font-mono uppercase bg-emerald-950 text-emerald-400 border border-emerald-800/60">
+                      Git
+                    </span>
+                  </button>
+                );
+              })
+            ) : (
+              filteredSlashCommands.map((cmd, idx) => {
+                const isSelected = idx === selectedSlashIndex;
+                return (
+                  <button
+                    key={cmd.name}
+                    type="button"
+                    id={`slash-cmd-${cmd.name.replace('/', '')}`}
+                    onClick={() => selectSlashCommand(cmd)}
+                    className={`w-full text-left px-2.5 py-1.5 flex items-center justify-between gap-2 transition-colors ${
+                      isSelected ? 'bg-[#094771] text-white' : 'hover:bg-[#2a2d2e] text-[#cccccc]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-mono font-semibold text-blue-300">{cmd.name}</span>
+                      <span className="truncate text-[11px] text-[#999999]">{cmd.description}</span>
+                    </div>
+                    <span
+                      className={`text-[9px] px-1.5 py-0.5 rounded font-mono uppercase ${
+                        cmd.category === 'Git'
+                          ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/60'
+                          : cmd.category === 'Code'
+                          ? 'bg-amber-950 text-amber-400 border border-amber-800/60'
+                          : 'bg-neutral-800 text-neutral-400'
+                      }`}
+                    >
+                      {cmd.category}
+                    </span>
+                  </button>
+                );
+              })
+            )}
           </div>
         )}
 

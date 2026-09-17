@@ -10,6 +10,7 @@ import { ActivityTracker } from './core/ActivityTracker';
 import {
   FileReadsTreeDataProvider,
   PendingDiffsTreeDataProvider,
+  SummaryMetricsTreeDataProvider,
   ToolCallsTreeDataProvider,
 } from './services/ActivityViews';
 import { ModelProvider } from './core/contracts';
@@ -219,6 +220,7 @@ function registerChatParticipant(
   extensionVersion: string,
   outputChannel: ActivityLogger,
   telemetry: ModelBehaviorTelemetry,
+  activityTracker: ActivityTracker,
 ) {
   const participant = vscode.chat.createChatParticipant('localllm.participant', async (request, chatContext, stream, token) => {
     outputChannel.appendLine(`[Chat] Request started; command=${request.command ?? 'none'}, prompt length=${request.prompt.length}.`);
@@ -233,7 +235,7 @@ function registerChatParticipant(
     let defaultModel = getSetting<string>('defaultModel', DEFAULT_MODEL);
     const temperature = getSetting<number>('temperature', DEFAULT_TEMPERATURE);
     const maxToolCalls = Math.min(getSetting<number>('maxToolCalls', DEFAULT_MAX_TOOL_CALLS), MAX_ALLOWED_TOOL_CALLS);
-    const client = new OllamaClient(baseUrl, outputChannel, telemetry);
+    const client = new OllamaClient(baseUrl, outputChannel, telemetry, activityTracker);
     const { requestedModel, remainingPrompt } = parseInlineModelDirective(request.prompt);
     const effectivePrompt = requestedModel ? remainingPrompt : request.prompt;
     const modelChange = parseModelChangeRequest(effectivePrompt);
@@ -362,18 +364,30 @@ function registerChatParticipant(
     }
 
     // Direct Git command shortcuts (handled via VS Code request.command or typed slash command)
-    const isGitCommand = request.command === 'pull' || request.command === 'push' || request.command === 'git' || request.command === 'status';
-    const directGitMatch = effectivePrompt.match(/^\/?(?:git\s+)?(pull|push|status|diff|log|branch|checkout|add|commit)(?:\s+(.*))?$/i);
+    const isGitCommand = request.command === 'git'
+      || request.command?.startsWith('git-')
+      || request.command === 'pull'
+      || request.command === 'push'
+      || request.command === 'status'
+      || request.command === 'merge'
+      || request.command === 'remote';
+    const directGitMatch = effectivePrompt.match(/^\/?(?:git[\s-])?(pull|push|status|diff|log|branch|checkout|add|commit|merge|remote)(?:\s+(.*))?$/i);
 
     if (isGitCommand || directGitMatch) {
       let gitAction = 'status';
       let extraArgs = '';
 
-      if (request.command === 'pull' || request.command === 'push' || request.command === 'status') {
+      if (request.command?.startsWith('git-')) {
+        gitAction = request.command.slice(4).toLowerCase();
+        extraArgs = effectivePrompt.trim();
+      } else if (request.command === 'pull' || request.command === 'push' || request.command === 'status' || request.command === 'merge' || request.command === 'remote') {
         gitAction = request.command;
         extraArgs = effectivePrompt.trim();
       } else if (request.command === 'git') {
-        const parts = effectivePrompt.trim().split(/\s+/);
+        const parts = effectivePrompt.trim().split(/\s+/).filter(Boolean);
+        if (parts[0]?.toLowerCase() === 'git') {
+          parts.shift();
+        }
         gitAction = parts[0] ? parts[0].toLowerCase() : 'status';
         extraArgs = parts.slice(1).join(' ').trim();
       } else if (directGitMatch) {
@@ -391,7 +405,7 @@ function registerChatParticipant(
         const parts = extraArgs.split(/\s+/).filter(Boolean);
         if (parts[0]) toolArgs.remote = parts[0];
         if (parts[1]) toolArgs.branch = parts[1];
-      } else if (gitAction === 'checkout') {
+      } else if (gitAction === 'checkout' || gitAction === 'merge') {
         if (extraArgs) toolArgs.branch = extraArgs;
       } else if (gitAction === 'add') {
         if (extraArgs) toolArgs.paths = extraArgs.split(/\s+/).filter(Boolean);
@@ -451,7 +465,7 @@ function registerChatParticipant(
         systemPrompt: [
           HUMAN_READABLE_SYSTEM_PROMPT,
           'You have bounded workspace and Git tools.',
-          'IMPORTANT FOR GIT TRANSACTIONS: When the user asks you to perform Git actions (such as pull, push, status, diff, commit, checkout, stage, or check branch), DO NOT provide markdown tutorials, bash instructions, or tell the user to run commands manually in a terminal. You MUST call the corresponding git tool (such as git_pull, git_push, git_status, git_commit, git_diff, git_branch, git_checkout) directly via tool call.',
+          'IMPORTANT FOR GIT TRANSACTIONS: When the user asks you to perform Git actions (such as pull, push, status, diff, commit, checkout, stage, branch, merge, or inspect remotes for GitHub/GitLab), DO NOT provide markdown tutorials, bash instructions, or tell the user to run commands manually in a terminal. You MUST call the corresponding git tool (such as git_pull, git_push, git_status, git_commit, git_diff, git_branch, git_checkout, git_merge, git_remote) directly via tool call.',
           'Use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant line ranges.',
           'Use Git tools for repository status, diffs, history, branches, checkout, staging, commits, pushes, and pulls. Never infer Git branches from workspace filenames or file contents; use git_branch. Use git_checkout to switch branches and wait for its confirmation result.',
           'Use multiple tool calls when needed. Do not claim to have inspected a file unless a tool result provided its content.',
@@ -496,10 +510,26 @@ export function activate(context: vscode.ExtensionContext) {
   const updateManager = new UpdateManager(activityLogger, context.globalStorageUri);
   const gitManager = new GitManager(activityLogger, activityTracker);
 
+  // Configure ActivityTracker settings and persistence
+  const retentionDays = getSetting<number>('activityRetentionDays', 7);
+  const viewMode = getSetting<'summary' | 'both'>('activityViewMode', 'both');
+  activityTracker.setRetentionDays(retentionDays);
+  activityTracker.setViewMode(viewMode);
+
+  const savedMetrics = context.globalState.get<string>('localOllama.activityMetricsState');
+  if (savedMetrics) {
+    activityTracker.importState(savedMetrics);
+  }
+  activityTracker.setStorageSaveHandler((serialized) => {
+    void context.globalState.update('localOllama.activityMetricsState', serialized);
+  });
+
+  const summaryProvider = new SummaryMetricsTreeDataProvider(activityTracker);
   const pendingDiffsProvider = new PendingDiffsTreeDataProvider(activityTracker);
   const toolCallsProvider = new ToolCallsTreeDataProvider(activityTracker);
   const fileReadsProvider = new FileReadsTreeDataProvider(activityTracker);
 
+  const summaryView = vscode.window.registerTreeDataProvider('localOllama.summaryView', summaryProvider);
   const pendingDiffsView = vscode.window.registerTreeDataProvider('localOllama.pendingDiffsView', pendingDiffsProvider);
   const toolCallsView = vscode.window.registerTreeDataProvider('localOllama.toolCallsView', toolCallsProvider);
   const fileReadsView = vscode.window.registerTreeDataProvider('localOllama.fileReadsView', fileReadsProvider);
@@ -510,6 +540,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   const refreshActivityCommand = vscode.commands.registerCommand('localOllama.refreshActivity', () => {
+    summaryProvider.refresh();
     pendingDiffsProvider.refresh();
     toolCallsProvider.refresh();
     fileReadsProvider.refresh();
@@ -675,6 +706,7 @@ export function activate(context: vscode.ExtensionContext) {
     updateFromWorkspaceCommand,
     updateCommand,
     openActivityLogCommand,
+    summaryView,
     pendingDiffsView,
     toolCallsView,
     fileReadsView,
@@ -682,7 +714,7 @@ export function activate(context: vscode.ExtensionContext) {
     refreshActivityCommand,
     reviewPlanCommand,
   );
-  registerChatParticipant(context, contextManager, editorManager, updateManager, gitManager, extensionVersion, activityLogger, telemetry);
+  registerChatParticipant(context, contextManager, editorManager, updateManager, gitManager, extensionVersion, activityLogger, telemetry, activityTracker);
 }
 
 export function deactivate() {

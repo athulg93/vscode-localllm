@@ -75,24 +75,43 @@ export class GitManager {
       },
       {
         name: 'git_push',
-        description: 'Push the current branch to its configured remote, or to a validated remote and branch. This always requires user confirmation.',
+        description: 'Push the current branch to its configured remote, or to a validated remote and branch (supports GitLab and GitHub remotes). This always requires user confirmation.',
         parameters: {
           type: 'object',
           properties: {
-            remote: { type: 'string', description: 'Optional remote name, such as origin.' },
+            remote: { type: 'string', description: 'Optional remote name, such as origin or gitlab.' },
             branch: { type: 'string', description: 'Optional branch name.' },
           },
         },
       },
       {
         name: 'git_pull',
-        description: 'Pull from the configured upstream, or a validated remote and branch. This always requires user confirmation.',
+        description: 'Pull from the configured upstream, or a validated remote and branch (supports GitLab and GitHub remotes). This always requires user confirmation.',
         parameters: {
           type: 'object',
           properties: {
-            remote: { type: 'string', description: 'Optional remote name, such as origin.' },
+            remote: { type: 'string', description: 'Optional remote name, such as origin or gitlab.' },
             branch: { type: 'string', description: 'Optional branch name.' },
           },
+        },
+      },
+      {
+        name: 'git_remote',
+        description: 'List configured Git remotes (origin, gitlab, github, etc.) and inspect their URLs with host provider detection.',
+        parameters: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
+        name: 'git_merge',
+        description: 'Merge an existing local branch into the current branch. This always requires user confirmation.',
+        parameters: {
+          type: 'object',
+          properties: {
+            branch: { type: 'string', description: 'Existing local branch name to merge into active branch.' },
+          },
+          required: ['branch'],
         },
       },
     ];
@@ -133,6 +152,12 @@ export class GitManager {
             break;
           case 'git_pull':
             result = await this.pushOrPull(workspaceFolder.uri.fsPath, 'pull', arguments_);
+            break;
+          case 'git_remote':
+            result = await this.remote(workspaceFolder.uri.fsPath);
+            break;
+          case 'git_merge':
+            result = await this.merge(workspaceFolder.uri.fsPath, arguments_);
             break;
           default:
             result = this.error(`Unknown Git tool: ${name}`);
@@ -222,6 +247,49 @@ export class GitManager {
     }
 
     return this.run(cwd, [operation, ...(remote ? [remote] : []), ...(branch ? [branch] : [])]);
+  }
+
+  private async remote(cwd: string): Promise<string> {
+    const output = await this.run(cwd, ['remote', '-v']);
+    if (!output || output === 'Git operation completed successfully.') {
+      return 'No Git remotes configured for this repository.\n\nTo link to GitLab or GitHub, use:\n  git remote add origin <url>';
+    }
+
+    const providers: string[] = [];
+    if (/gitlab/i.test(output)) providers.push('GitLab');
+    if (/github/i.test(output)) providers.push('GitHub');
+    if (/bitbucket/i.test(output)) providers.push('Bitbucket');
+
+    const providerHeader = providers.length > 0
+      ? `Configured Git Remotes [Detected Provider: ${providers.join(', ')}]:`
+      : 'Configured Git Remotes:';
+
+    return `${providerHeader}\n\n${output}`;
+  }
+
+  private async merge(cwd: string, arguments_: GitArguments): Promise<string> {
+    const branch = this.getOptionalName(arguments_.branch, 'branch');
+    if (!branch) {
+      return this.error('A branch name to merge is required.');
+    }
+    if (branch.includes('..')) {
+      return this.error('Invalid branch name.');
+    }
+
+    let currentBranch = 'active branch';
+    try {
+      const branchRes = await this.run(cwd, ['branch', '--show-current']);
+      if (branchRes && branchRes !== 'Git operation completed successfully.') {
+        currentBranch = branchRes.trim();
+      }
+    } catch {}
+
+    const approved = await this.confirm(`Merge local branch "${branch}" into current branch "${currentBranch}"?`);
+    if (!approved) {
+      return this.cancelled();
+    }
+
+    return this.run(cwd, ['merge', branch]);
   }
 
   private async confirm(message: string): Promise<boolean> {

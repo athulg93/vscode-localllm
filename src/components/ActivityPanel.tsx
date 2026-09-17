@@ -16,16 +16,20 @@ import {
   XCircle,
   AlertTriangle,
   Play,
-  Layers
+  Layers,
+  BarChart3,
+  Sliders,
 } from 'lucide-react';
 import {
   ActivityTracker,
   ToolCallActivity,
   FileReadActivity,
   PendingDiffActivity,
+  ActivitySummaryMetrics,
   globalActivityTracker,
 } from '../core/ActivityTracker';
 import { LogEntry } from '../web/WebLogger';
+import { ActivitySummaryView } from './ActivitySummaryView';
 
 interface ActivityPanelProps {
   logs: LogEntry[];
@@ -46,7 +50,10 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
   onDiscardPendingDiff,
   currentModel = 'qwen2.5-coder:7b',
 }) => {
-  const [activeTab, setActiveTab] = useState<'tools' | 'reads' | 'diffs' | 'raw'>('tools');
+  const [activeTab, setActiveTab] = useState<'summary' | 'tools' | 'reads' | 'diffs' | 'raw'>('summary');
+  const [viewMode, setViewMode] = useState<'summary' | 'both'>(() => globalActivityTracker.getViewMode());
+  const [retentionDays, setRetentionDays] = useState<number>(() => globalActivityTracker.getRetentionDays());
+  const [summaryMetrics, setSummaryMetrics] = useState<ActivitySummaryMetrics>(() => globalActivityTracker.getSummaryMetrics());
   const [toolCalls, setToolCalls] = useState<ToolCallActivity[]>(() => globalActivityTracker.getToolCalls());
   const [fileReads, setFileReads] = useState<FileReadActivity[]>(() => globalActivityTracker.getFileReads());
   const [pendingDiffs, setPendingDiffs] = useState<PendingDiffActivity[]>(() => globalActivityTracker.getPendingDiffs());
@@ -58,6 +65,9 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
 
   useEffect(() => {
     const unsubscribe = globalActivityTracker.subscribe(() => {
+      setSummaryMetrics(globalActivityTracker.getSummaryMetrics());
+      setViewMode(globalActivityTracker.getViewMode());
+      setRetentionDays(globalActivityTracker.getRetentionDays());
       setToolCalls(globalActivityTracker.getToolCalls());
       setFileReads(globalActivityTracker.getFileReads());
       setPendingDiffs(globalActivityTracker.getPendingDiffs());
@@ -76,6 +86,19 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
     onClearLogs();
   };
 
+  const handleViewModeChange = (mode: 'summary' | 'both') => {
+    globalActivityTracker.setViewMode(mode);
+    setViewMode(mode);
+    if (mode === 'summary') {
+      setActiveTab('summary');
+    }
+  };
+
+  const handleRetentionDaysChange = (days: number) => {
+    globalActivityTracker.setRetentionDays(days);
+    setRetentionDays(days);
+  };
+
   const pendingCount = pendingDiffs.filter((d) => d.status === 'pending').length;
 
   return (
@@ -87,7 +110,29 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
           <span className="font-semibold text-neutral-200">AGENT ACTIVITY & DIAGNOSTICS</span>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
+          {/* View mode pill */}
+          <div className="flex items-center rounded bg-[#181818] border border-[#333333] p-0.5 text-[10px]">
+            <button
+              onClick={() => handleViewModeChange('summary')}
+              className={`px-1.5 py-0.5 rounded transition-colors ${
+                viewMode === 'summary' ? 'bg-emerald-600 text-white' : 'text-neutral-400 hover:text-white'
+              }`}
+              title="Show summary view only"
+            >
+              Summary
+            </button>
+            <button
+              onClick={() => handleViewModeChange('both')}
+              className={`px-1.5 py-0.5 rounded transition-colors ${
+                viewMode === 'both' ? 'bg-blue-600 text-white' : 'text-neutral-400 hover:text-white'
+              }`}
+              title="Show summary and detailed tabs"
+            >
+              Detailed
+            </button>
+          </div>
+
           <button
             id="activity-clear-btn"
             onClick={handleClearAll}
@@ -104,8 +149,12 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
         <div className="flex items-center gap-1.5 font-mono">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
           <span className="text-neutral-300">{currentModel}</span>
+          <span className="text-neutral-500">•</span>
+          <span className="text-neutral-400">{summaryMetrics.hardware.totalSizeFormatted}</span>
+          <span className="text-emerald-400">({summaryMetrics.hardware.percentVram}% VRAM)</span>
         </div>
-        <div className="text-[10px] text-neutral-400">
+        <div className="flex items-center gap-2 text-[10px] text-neutral-400">
+          <span className="font-mono text-amber-400">{summaryMetrics.latestTokensPerSecond ?? 36.8} tok/s</span>
           {currentModel.toLowerCase().includes('qwen') || currentModel.toLowerCase().includes('llama3') ? (
             <span className="text-emerald-400 font-mono">Native Tools API</span>
           ) : (
@@ -114,80 +163,113 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
         </div>
       </div>
 
-      {/* View Tabs */}
-      <div className="flex items-center border-b border-[#2d2d2d] bg-[#222222] text-xs font-mono">
-        <button
-          id="tab-tools-btn"
-          onClick={() => setActiveTab('tools')}
-          className={`flex-1 py-1.5 px-2 flex items-center justify-center gap-1.5 border-b-2 transition-colors ${
-            activeTab === 'tools'
-              ? 'border-emerald-500 text-white bg-[#2a2a2a]'
-              : 'border-transparent text-[#888888] hover:text-white'
-          }`}
-        >
-          <Play className="w-3 h-3 text-emerald-400" />
-          <span>Tool Calls</span>
-          <span className="text-[10px] px-1 py-0.2 rounded bg-[#333333] text-neutral-300">
-            {toolCalls.length}
-          </span>
-        </button>
+      {/* View Tabs - Shown when viewMode is 'both' or tab is selected */}
+      {viewMode === 'both' && (
+        <div className="flex items-center border-b border-[#2d2d2d] bg-[#222222] text-xs font-mono">
+          <button
+            id="tab-summary-btn"
+            onClick={() => setActiveTab('summary')}
+            className={`flex-1 py-1.5 px-2 flex items-center justify-center gap-1.5 border-b-2 transition-colors ${
+              activeTab === 'summary'
+                ? 'border-indigo-500 text-white bg-[#2a2a2a]'
+                : 'border-transparent text-[#888888] hover:text-white'
+            }`}
+          >
+            <BarChart3 className="w-3 h-3 text-indigo-400" />
+            <span>Summary</span>
+          </button>
 
-        <button
-          id="tab-reads-btn"
-          onClick={() => setActiveTab('reads')}
-          className={`flex-1 py-1.5 px-2 flex items-center justify-center gap-1.5 border-b-2 transition-colors ${
-            activeTab === 'reads'
-              ? 'border-blue-500 text-white bg-[#2a2a2a]'
-              : 'border-transparent text-[#888888] hover:text-white'
-          }`}
-        >
-          <FileCode2 className="w-3 h-3 text-blue-400" />
-          <span>File Reads</span>
-          <span className="text-[10px] px-1 py-0.2 rounded bg-[#333333] text-neutral-300">
-            {fileReads.length}
-          </span>
-        </button>
-
-        <button
-          id="tab-diffs-btn"
-          onClick={() => setActiveTab('diffs')}
-          className={`flex-1 py-1.5 px-2 flex items-center justify-center gap-1.5 border-b-2 transition-colors ${
-            activeTab === 'diffs'
-              ? 'border-amber-500 text-white bg-[#2a2a2a]'
-              : 'border-transparent text-[#888888] hover:text-white'
-          }`}
-        >
-          <GitCompare className="w-3 h-3 text-amber-400" />
-          <span>Pending Diffs</span>
-          {pendingCount > 0 ? (
-            <span className="text-[10px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-              {pendingCount}
-            </span>
-          ) : (
+          <button
+            id="tab-tools-btn"
+            onClick={() => setActiveTab('tools')}
+            className={`flex-1 py-1.5 px-2 flex items-center justify-center gap-1.5 border-b-2 transition-colors ${
+              activeTab === 'tools'
+                ? 'border-emerald-500 text-white bg-[#2a2a2a]'
+                : 'border-transparent text-[#888888] hover:text-white'
+            }`}
+          >
+            <Play className="w-3 h-3 text-emerald-400" />
+            <span>Tool Calls</span>
             <span className="text-[10px] px-1 py-0.2 rounded bg-[#333333] text-neutral-300">
-              {pendingDiffs.length}
+              {toolCalls.length}
             </span>
-          )}
-        </button>
+          </button>
 
-        <button
-          id="tab-raw-btn"
-          onClick={() => setActiveTab('raw')}
-          className={`py-1.5 px-2 flex items-center justify-center gap-1 border-b-2 transition-colors ${
-            activeTab === 'raw'
-              ? 'border-cyan-500 text-white bg-[#2a2a2a]'
-              : 'border-transparent text-[#888888] hover:text-white'
-          }`}
-          title="Raw Output Channel"
-        >
-          <Terminal className="w-3 h-3 text-cyan-400" />
-        </button>
-      </div>
+          <button
+            id="tab-reads-btn"
+            onClick={() => setActiveTab('reads')}
+            className={`flex-1 py-1.5 px-2 flex items-center justify-center gap-1.5 border-b-2 transition-colors ${
+              activeTab === 'reads'
+                ? 'border-blue-500 text-white bg-[#2a2a2a]'
+                : 'border-transparent text-[#888888] hover:text-white'
+            }`}
+          >
+            <FileCode2 className="w-3 h-3 text-blue-400" />
+            <span>File Reads</span>
+            <span className="text-[10px] px-1 py-0.2 rounded bg-[#333333] text-neutral-300">
+              {fileReads.length}
+            </span>
+          </button>
+
+          <button
+            id="tab-diffs-btn"
+            onClick={() => setActiveTab('diffs')}
+            className={`flex-1 py-1.5 px-2 flex items-center justify-center gap-1.5 border-b-2 transition-colors ${
+              activeTab === 'diffs'
+                ? 'border-amber-500 text-white bg-[#2a2a2a]'
+                : 'border-transparent text-[#888888] hover:text-white'
+            }`}
+          >
+            <GitCompare className="w-3 h-3 text-amber-400" />
+            <span>Pending Diffs</span>
+            {pendingCount > 0 ? (
+              <span className="text-[10px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                {pendingCount}
+              </span>
+            ) : (
+              <span className="text-[10px] px-1 py-0.2 rounded bg-[#333333] text-neutral-300">
+                {pendingDiffs.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            id="tab-raw-btn"
+            onClick={() => setActiveTab('raw')}
+            className={`py-1.5 px-2.5 flex items-center justify-center gap-1 border-b-2 transition-colors ${
+              activeTab === 'raw'
+                ? 'border-cyan-500 text-white bg-[#2a2a2a]'
+                : 'border-transparent text-[#888888] hover:text-white'
+            }`}
+            title="Raw Output Channel"
+          >
+            <Terminal className="w-3 h-3 text-cyan-400" />
+          </button>
+        </div>
+      )}
 
       {/* Content Area */}
-      <div className="flex-1 overflow-y-auto p-2">
+      <div className="flex-1 overflow-y-auto p-3">
+        {/* TAB 0: SUMMARY METRICS (Always visible in summary mode, or when selected) */}
+        {(activeTab === 'summary' || viewMode === 'summary') && (
+          <ActivitySummaryView
+            metrics={summaryMetrics}
+            viewMode={viewMode}
+            retentionDays={retentionDays}
+            onChangeViewMode={handleViewModeChange}
+            onChangeRetentionDays={handleRetentionDaysChange}
+            onClearHistory={handleClearAll}
+            onSwitchToTab={(tab) => {
+              if (viewMode === 'summary') {
+                handleViewModeChange('both');
+              }
+              setActiveTab(tab);
+            }}
+          />
+        )}
+
         {/* TAB 1: TOOL CALLS */}
-        {activeTab === 'tools' && (
+        {viewMode === 'both' && activeTab === 'tools' && (
           <div className="space-y-2">
             <div className="flex items-center gap-2 mb-2 px-1">
               <div className="relative flex-1">
@@ -312,7 +394,7 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
         )}
 
         {/* TAB 2: FILE READS */}
-        {activeTab === 'reads' && (
+        {viewMode === 'both' && activeTab === 'reads' && (
           <div className="space-y-2">
             <div className="text-[11px] text-neutral-400 px-1 mb-1 font-mono">
               Files read and ingested as bounded context:
@@ -387,7 +469,7 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
         )}
 
         {/* TAB 3: PENDING DIFFS */}
-        {activeTab === 'diffs' && (
+        {viewMode === 'both' && activeTab === 'diffs' && (
           <div className="space-y-3">
             <div className="p-2.5 bg-amber-950/20 border border-amber-800/40 rounded text-xs">
               <div className="flex items-center gap-1.5 font-semibold text-amber-300 mb-1">
@@ -518,7 +600,7 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
         )}
 
         {/* TAB 4: RAW LOG */}
-        {activeTab === 'raw' && (
+        {viewMode === 'both' && activeTab === 'raw' && (
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-mono mb-2">
               <select

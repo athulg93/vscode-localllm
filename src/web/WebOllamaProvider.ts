@@ -8,6 +8,7 @@ import {
 import { WebLogger } from './WebLogger';
 import { PromptIntent } from '../types';
 import { classifyPromptIntent } from '../core/PromptIntentClassifier';
+import { globalActivityTracker } from '../core/ActivityTracker';
 
 export const SIMULATED_MODELS = [
   'qwen2.5-coder:7b',
@@ -184,7 +185,25 @@ export class WebOllamaProvider implements ModelProvider {
       options.onToken(word);
       await new Promise((r) => setTimeout(r, 18));
     }
+    this.recordActivitySession(model, prompt, text);
     return text;
+  }
+
+  private recordActivitySession(model: string, prompt: string, response: string): void {
+    const promptTokens = Math.max(16, Math.round(prompt.length / 3.8));
+    const generatedTokens = Math.max(12, Math.round(response.length / 3.8));
+    const durationMs = 2400 + Math.min(2000, response.length * 2);
+    const tps = Math.round((generatedTokens / (durationMs / 1000)) * 10) / 10;
+    globalActivityTracker.recordChatSession({
+      model,
+      userPromptChars: prompt.length,
+      agentResponseChars: response.length,
+      promptTokens,
+      generatedTokens,
+      tokensPerSecond: tps > 0 ? tps : 36.5,
+      durationMs,
+      timeToFirstTokenMs: 380,
+    });
   }
 
   async sendPromptWithTools(
@@ -244,12 +263,16 @@ export class WebOllamaProvider implements ModelProvider {
 
     if (intent === PromptIntent.EditFile || intent === PromptIntent.EditProject || options.responseFormat) {
       options.onStatus?.('Preparing structured edit plan...');
-      return this.generateSimulatedEditPlan(prompt, targetPath, fileContentRaw);
+      const plan = this.generateSimulatedEditPlan(prompt, targetPath, fileContentRaw);
+      this.recordActivitySession(model, prompt, plan);
+      return plan;
     }
 
     options.onStatus?.('Synthesizing answer from workspace context...');
     await new Promise((r) => setTimeout(r, 200));
-    return this.generateSimulatedAnalysis(prompt, targetPath, fileContentRaw);
+    const analysis = this.generateSimulatedAnalysis(prompt, targetPath, fileContentRaw);
+    this.recordActivitySession(model, prompt, analysis);
+    return analysis;
   }
 
   private generateSimulatedEditPlan(prompt: string, targetPath: string, fileContentJson: string): string {

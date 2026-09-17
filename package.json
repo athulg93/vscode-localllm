@@ -84,6 +84,10 @@
     "views": {
       "local-ollama-activity": [
         {
+          "id": "localOllama.summaryView",
+          "name": "Session & Hardware Performance"
+        },
+        {
           "id": "localOllama.pendingDiffsView",
           "name": "Pending Diffs & Approvals"
         },
@@ -128,6 +132,28 @@
           "minimum": 4,
           "maximum": 40,
           "description": "Maximum workspace exploration operations allowed for one chat request."
+        },
+        "localOllama.activityViewMode": {
+          "type": "string",
+          "default": "both",
+          "enum": ["summary", "both"],
+          "enumDescriptions": [
+            "Show high-level executive metrics (tokens, speed, RAM, conversations).",
+            "Show executive summary and detailed tool logs."
+          ],
+          "description": "Preferred activity log display mode: executive summary or summary + detailed inspector."
+        },
+        "localOllama.activityRetentionDays": {
+          "type": "number",
+          "default": 7,
+          "enum": [1, 7, 14, 30],
+          "enumDescriptions": [
+            "Retain activity metrics for 1 day (24 hours).",
+            "Retain activity metrics for 1 week (7 days - default).",
+            "Retain activity metrics for 2 weeks (14 days).",
+            "Retain activity metrics for 1 month (30 days)."
+          ],
+          "description": "Rolling retention period for local activity logs and token performance metrics."
         }
       }
     },
@@ -163,32 +189,40 @@
             "description": "Check GitHub Releases for a newer extension version"
           },
           {
-            "name": "pull",
-            "description": "Git pull latest changes from remote repository"
-          },
-          {
-            "name": "push",
-            "description": "Git push commits to remote repository"
-          },
-          {
-            "name": "status",
-            "description": "Show repository branch and working-tree status"
-          },
-          {
-            "name": "diff",
-            "description": "Show bounded working tree or staged diff"
-          },
-          {
-            "name": "log",
-            "description": "Show recent commit history"
-          },
-          {
-            "name": "branch",
-            "description": "Show repository branches"
-          },
-          {
             "name": "git",
-            "description": "Run Git operations (pull, push, status, diff, log, branch, checkout, add, commit)"
+            "description": "Run Git operations (status, diff, log, branch, pull, push, remote, merge, checkout, add, commit)"
+          },
+          {
+            "name": "git-status",
+            "description": "Show Git repository status and active branch"
+          },
+          {
+            "name": "git-push",
+            "description": "Push commits to GitLab or GitHub remote repository"
+          },
+          {
+            "name": "git-pull",
+            "description": "Pull latest changes from GitLab or GitHub remote repository"
+          },
+          {
+            "name": "git-remote",
+            "description": "List configured Git remotes and detect GitLab / GitHub hosts"
+          },
+          {
+            "name": "git-diff",
+            "description": "Show working tree diff or staged changes"
+          },
+          {
+            "name": "git-commit",
+            "description": "Commit staged workspace changes with a message"
+          },
+          {
+            "name": "git-branch",
+            "description": "List local and remote branches"
+          },
+          {
+            "name": "git-merge",
+            "description": "Merge another branch into the active branch"
           }
         ],
         "isSticky": true

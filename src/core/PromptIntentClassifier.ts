@@ -6,12 +6,14 @@ const INTENT_PATTERNS: Array<{ intent: PromptIntent; patterns: RegExp[] }> = [
   {
     intent: PromptIntent.GitTransaction,
     patterns: [
-      /^\/?(?:git\s+)?(pull|push|status|diff|commit|add|checkout|branch)\b/i,
-      /\b(git\s+(pull|push|commit|status|diff|add|checkout|branch))\b/i,
-      /\b(pull|push)\b[\s\S]*\b(repo|repository|remote|branch|origin|upstream|github)\b/i,
-      /\b(pull|push)\s+(from|to)\s+\w+/i,
+      /^\/?(?:git[\s-])?(pull|push|status|diff|commit|add|checkout|branch|remote|merge|log)\b/i,
+      /\b(git[\s-]+(pull|push|commit|status|diff|add|checkout|branch|remote|merge|log))\b/i,
+      /\b(pull|push|sync)\b[\s\S]*\b(repo|repository|remote|branch|origin|upstream|github|gitlab)\b/i,
+      /\b(pull|push|sync)\s+(from|to)\s+\w+/i,
+      /\b(merge|rebase)\b[\s\S]*\b(branch|mr|pr|pull request|merge request)\b/i,
       /\b(commit|stage)\b[\s\S]*\b(changes|files?|work)\b/i,
-      /\b(check|show)\s+(git\s+)?(status|diff|branch|branches|log|commits)\b/i,
+      /\b(check|show|list)\s+(git\s+)?(status|diff|branch|branches|log|commits|remotes?)\b/i,
+      /\b(gitlab|github)\s+(repo|repository|remote|branch|commit|pull|push)\b/i,
     ],
   },
   {

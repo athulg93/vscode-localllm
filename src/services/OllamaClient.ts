@@ -1,13 +1,14 @@
 /// <reference lib="dom" />
 
 import { HUMAN_READABLE_SYSTEM_PROMPT, MAX_COMPLETION_CHECKS, OLLAMA_REQUEST_TIMEOUT_MS } from '../constants';
-import { OllamaChatResponse, OllamaMessage, OllamaShowResponse, OllamaTagResponse } from '../types';
+import { OllamaChatResponse, OllamaMessage, OllamaPsResponse, OllamaShowResponse, OllamaTagResponse } from '../types';
 import { CancellationLike, ConversationMessage, Logger, ModelProvider, ProviderStatus, ResponseFormat, ToolDefinition } from '../core/contracts';
 import { NdjsonParseError, consumeNdjsonBuffer } from '../core/NdjsonStream';
 import { ModelBehaviorTelemetry } from '../core/ModelBehaviorTelemetry';
 import { ModelBehaviorProfile, resolveModelProfile } from '../core/ModelProfiles';
 import { shouldUseWorkspaceTools } from '../core/ToolIntentGate';
 import { parseTextToolCall, parseXmlToolCall } from '../core/TextToolCallParser';
+import { ActivityTracker } from '../core/ActivityTracker';
 
 type PromptOptions = {
   systemPrompt?: string;
@@ -43,7 +44,46 @@ export class OllamaClient implements ModelProvider {
     private readonly baseUrl: string,
     private readonly outputChannel: Logger,
     private readonly telemetry?: ModelBehaviorTelemetry,
+    private readonly activityTracker?: ActivityTracker,
   ) {}
+
+  async getProcessStats(): Promise<OllamaPsResponse> {
+    const endpoint = `${this.baseUrl}/api/ps`;
+    try {
+      const response = await fetch(endpoint);
+      if (!response.ok) return { models: [] };
+      return (await response.json()) as OllamaPsResponse;
+    } catch {
+      return { models: [] };
+    }
+  }
+
+  async refreshHardwareStats(modelName: string): Promise<void> {
+    if (!this.activityTracker) return;
+    try {
+      const ps = await this.getProcessStats();
+      const loaded = ps.models?.find((m) => m.name === modelName || m.model === modelName) || ps.models?.[0];
+      if (loaded && loaded.size) {
+        const totalGb = (loaded.size / (1024 * 1024 * 1024)).toFixed(1);
+        const vramGb = ((loaded.size_vram || 0) / (1024 * 1024 * 1024)).toFixed(1);
+        const sysRamBytes = Math.max(0, loaded.size - (loaded.size_vram || 0));
+        const sysRamGb = (sysRamBytes / (1024 * 1024 * 1024)).toFixed(1);
+        const pctVram = Math.min(100, Math.round(((loaded.size_vram || 0) / loaded.size) * 100));
+
+        this.activityTracker.updateHardwareStats({
+          modelName: loaded.name || modelName,
+          totalSizeBytes: loaded.size,
+          vramSizeBytes: loaded.size_vram || 0,
+          totalSizeFormatted: `${totalGb} GB`,
+          vramFormatted: `${vramGb} GB`,
+          systemRamFormatted: `${sysRamGb} GB`,
+          percentVram: pctVram,
+          isFullyGpuAccelerated: pctVram >= 99,
+          expiresAt: loaded.expires_at,
+        });
+      }
+    } catch {}
+  }
 
   async listModels(): Promise<string[]> {
     const endpoint = `${this.baseUrl}/api/tags`;
@@ -127,7 +167,27 @@ export class OllamaClient implements ModelProvider {
       throw new Error(data.error);
     }
 
-    return data.message?.content ?? 'No response returned from Ollama.';
+    const content = data.message?.content ?? 'No response returned from Ollama.';
+
+    if (this.activityTracker) {
+      const evalCount = data.eval_count || Math.max(1, Math.round(content.length / 3.8));
+      const promptEvalCount = data.prompt_eval_count || Math.max(1, Math.round(prompt.length / 3.8));
+      const evalDurationSeconds = data.eval_duration ? data.eval_duration / 1e9 : 0.001;
+      const tokensPerSecond = evalDurationSeconds > 0 ? evalCount / evalDurationSeconds : undefined;
+      this.activityTracker.recordChatSession({
+        model,
+        userPromptChars: prompt.length,
+        agentResponseChars: content.length,
+        promptTokens: promptEvalCount,
+        generatedTokens: evalCount,
+        tokensPerSecond: tokensPerSecond ? Math.round(tokensPerSecond * 10) / 10 : undefined,
+        durationMs: data.total_duration ? Math.round(data.total_duration / 1e6) : 0,
+        timeToFirstTokenMs: data.prompt_eval_duration ? Math.round(data.prompt_eval_duration / 1e6) : undefined,
+      });
+      void this.refreshHardwareStats(model);
+    }
+
+    return content;
   }
 
   async sendPromptWithTools(model: string, prompt: string, temperature: number, options: ToolPromptOptions): Promise<string> {
@@ -273,6 +333,7 @@ export class OllamaClient implements ModelProvider {
     const decoder = new TextDecoder();
     let buffer = '';
     let fullText = '';
+    let lastDoneChunk: OllamaChatResponse | undefined;
 
     try {
       while (true) {
@@ -292,6 +353,9 @@ export class OllamaClient implements ModelProvider {
         for (const chunk of parsed.chunks) {
           if (chunk.error) {
             throw new Error(chunk.error);
+          }
+          if (chunk.done) {
+            lastDoneChunk = chunk;
           }
 
           const piece = chunk.message?.content ?? '';
@@ -313,6 +377,9 @@ export class OllamaClient implements ModelProvider {
         if (chunk.error) {
           throw new Error(chunk.error);
         }
+        if (chunk.done) {
+          lastDoneChunk = chunk;
+        }
 
         const piece = chunk.message?.content ?? '';
         if (!piece) {
@@ -328,6 +395,25 @@ export class OllamaClient implements ModelProvider {
 
     const responseText = fullText || 'No response returned from Ollama.';
     this.outputChannel.appendLine(`[Ollama] Stream completed; response length ${responseText.length}.`);
+
+    if (this.activityTracker) {
+      const evalCount = lastDoneChunk?.eval_count || Math.max(1, Math.round(responseText.length / 3.8));
+      const promptEvalCount = lastDoneChunk?.prompt_eval_count || Math.max(1, Math.round(prompt.length / 3.8));
+      const evalDurationSeconds = lastDoneChunk?.eval_duration ? lastDoneChunk.eval_duration / 1e9 : 0.001;
+      const tokensPerSecond = evalDurationSeconds > 0 ? evalCount / evalDurationSeconds : undefined;
+      this.activityTracker.recordChatSession({
+        model,
+        userPromptChars: prompt.length,
+        agentResponseChars: responseText.length,
+        promptTokens: promptEvalCount,
+        generatedTokens: evalCount,
+        tokensPerSecond: tokensPerSecond ? Math.round(tokensPerSecond * 10) / 10 : undefined,
+        durationMs: lastDoneChunk?.total_duration ? Math.round(lastDoneChunk.total_duration / 1e6) : 0,
+        timeToFirstTokenMs: lastDoneChunk?.prompt_eval_duration ? Math.round(lastDoneChunk.prompt_eval_duration / 1e6) : undefined,
+      });
+      void this.refreshHardwareStats(model);
+    }
+
     return responseText;
   }
 

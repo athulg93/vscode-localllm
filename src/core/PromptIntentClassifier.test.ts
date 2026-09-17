@@ -26,6 +26,11 @@ test('classifies analysis requests scoped to the whole project', () => {
 test('classifies git transaction requests', () => {
   assert.equal(classifyPromptIntent('pull latest changes from origin'), PromptIntent.GitTransaction);
   assert.equal(classifyPromptIntent('push this branch to github'), PromptIntent.GitTransaction);
+  assert.equal(classifyPromptIntent('push this branch to gitlab'), PromptIntent.GitTransaction);
+  assert.equal(classifyPromptIntent('sync latest changes from gitlab'), PromptIntent.GitTransaction);
+  assert.equal(classifyPromptIntent('/git-push origin main'), PromptIntent.GitTransaction);
+  assert.equal(classifyPromptIntent('/git-merge feature-branch'), PromptIntent.GitTransaction);
+  assert.equal(classifyPromptIntent('/git-remote'), PromptIntent.GitTransaction);
   assert.equal(classifyPromptIntent('git status'), PromptIntent.GitTransaction);
   assert.equal(classifyPromptIntent('check git diff'), PromptIntent.GitTransaction);
   assert.equal(classifyPromptIntent('commit changes with message "fix bug"'), PromptIntent.GitTransaction);
