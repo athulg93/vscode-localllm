@@ -128,14 +128,13 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         {/* Download VSIX button */}
         <a
           id="titlebar-download-vsix-btn"
-          href="https://github.com/athulg93/vscode-localllm/releases/download/v1.3.1/local-ollama-1.3.1.vsix"
-          target="_blank"
-          rel="noopener noreferrer"
-          title="Download the official VS Code extension (.vsix package v1.3.1) from GitHub"
+          href="/local-ollama-1.4.0.vsix"
+          download="local-ollama-1.4.0.vsix"
+          title="Download Local Ollama v1.4.0 VS Code extension package (.vsix)"
           className="flex items-center gap-1.5 bg-[#007acc] hover:bg-[#0062a3] text-white px-2.5 py-1 rounded text-xs font-medium transition-colors shadow-sm ml-1"
         >
           <Download className="w-3.5 h-3.5" />
-          <span>Download .VSIX v1.3.1</span>
+          <span>Download .VSIX v1.4.0</span>
         </a>
       </div>
     </header>

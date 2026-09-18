@@ -252,7 +252,9 @@ export class OllamaClient implements ModelProvider {
       const toolCalls = nativeToolCalls.length > 0 ? nativeToolCalls : textToolCalls;
       if (toolCalls.length === 0) {
         const content = message?.content ?? '';
-        const shouldCheckCompletion = completionChecks < MAX_COMPLETION_CHECKS
+        const isAskingUser = /\?\s*$/m.test(content.trim()) || /\b(?:would you like|do you want|shall i|should i|please confirm|proceed\?)\b/i.test(content);
+        const shouldCheckCompletion = !isAskingUser
+          && completionChecks < MAX_COMPLETION_CHECKS
           && (completionChecks === 0 || this.isLikelyIncompleteResponse(content));
         if (shouldCheckCompletion) {
           completionChecks += 1;
@@ -291,12 +293,25 @@ export class OllamaClient implements ModelProvider {
         const name = toolCall.function?.name ?? '';
         options.onStatus?.(`Reading workspace context${toolCallCount > 1 ? ` (${toolCallCount}/${maxToolCalls})` : ''}...`);
         const toolResult = await options.executeTool(name, toolCall.function?.arguments ?? {});
+
+        let toolContent = toolResult;
+        const isGitTool = name.startsWith('git_');
+        let parsedResult: any = null;
+        try {
+          parsedResult = JSON.parse(toolResult);
+        } catch {}
+
+        if (parsedResult?.agentGuidance) {
+          toolContent = `${toolResult}\n\n${parsedResult.agentGuidance}`;
+        }
+
         if (nativeToolCalls.length > 0 && profile.toolResultRole === 'tool') {
-          messages.push({ role: 'tool', content: toolResult });
+          messages.push({ role: 'tool', content: toolContent });
         } else {
+          const header = isGitTool ? 'GIT TOOL RESULT' : 'WORKSPACE TOOL RESULT';
           messages.push({
             role: 'user',
-            content: `FILE TOOL RESULT:\n${toolResult}\n\nUse this result to continue the original request. Call another tool if more evidence is needed; otherwise return the final answer.`,
+            content: `${header}:\n${toolContent}\n\nUse this result to continue the original request. Follow any diagnostic directives provided. Call another tool if needed, or ask the user for confirmation, or return the final answer.`,
           });
         }
       }

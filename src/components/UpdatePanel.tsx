@@ -54,12 +54,22 @@ export const UpdatePanel: React.FC<UpdatePanelProps> = ({ currentVersion }) => {
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         <div className="p-3 rounded bg-[#1e1e1e] border border-[#3c3c3c]">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between mb-3">
             <span className="text-neutral-400">Current Installed Version:</span>
             <span className="font-mono text-white font-bold bg-[#333333] px-2 py-0.5 rounded">
               v{currentVersion}
             </span>
           </div>
+
+          <a
+            id="download-latest-built-vsix-btn"
+            href="/local-ollama-1.4.0.vsix"
+            download="local-ollama-1.4.0.vsix"
+            className="w-full bg-[#007acc] hover:bg-[#0062a3] text-white font-medium py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors text-xs shadow-sm"
+          >
+            <Download className="w-4 h-4" />
+            <span>Download local-ollama-1.4.0.vsix (135 KB)</span>
+          </a>
         </div>
 
         <button

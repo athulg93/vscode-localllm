@@ -265,7 +265,7 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
     }
 
     // Direct Git command shortcuts in interactive preview
-    const directGitMatch = text.match(/^\/?(?:git[\s-])?(pull|push|status|diff|log|branch|remote|merge|checkout|add|commit)(?:\s+(.*))?$/i);
+    const directGitMatch = text.match(/^\/?(?:git[\s-])?(pull|push|status|diff|log|branch|remote|merge|checkout|add|commit|stash|fetch)(?:\s+(.*))?$/i);
     if (directGitMatch) {
       const gitAction = directGitMatch[1].toLowerCase();
       const extraArgs = (directGitMatch[2] || '').trim();
@@ -278,6 +278,10 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
         gitOutput = `Updating 4a19c3b..8f2b10e\nFast-forward\n src/auth/AuthService.ts | 12 +++++++++++-\n 1 file changed, 11 insertions(+), 1 deletion(-)\nSuccessfully pulled latest changes from ${extraArgs || 'origin/main'}.`;
       } else if (gitAction === 'push') {
         gitOutput = `Enumerating objects: 7, done.\nCounting objects: 100% (7/7), done.\nWriting objects: 100% (4/4), 842 bytes | 842.00 KiB/s, done.\nTotal 4 (delta 2), reused 0 (delta 0)\nTo ${extraArgs || 'origin/main'} (remote repository updated)\n   8f2b10e..9c34a1b  main -> main\nBranch 'main' set up to track remote branch 'main' from 'origin'.`;
+      } else if (gitAction === 'stash') {
+        gitOutput = `Saved working directory and index state WIP on main: 9c34a1b ${extraArgs || 'Auto-stash before sync'}\nRecorded stash@{0}`;
+      } else if (gitAction === 'fetch') {
+        gitOutput = `From https://github.com/athulg93/vscode-localllm\n * [new branch]      main       -> origin/main\n * [new branch]      feature/auth -> origin/feature/auth`;
       } else if (gitAction === 'remote') {
         gitOutput = `Configured Git Remotes [Detected Providers: GitLab, GitHub]:\n\norigin\thttps://gitlab.com/workspace/localllm-repo.git (fetch)\norigin\thttps://gitlab.com/workspace/localllm-repo.git (push)\nupstream\thttps://github.com/athulg93/vscode-localllm.git (fetch)\nupstream\thttps://github.com/athulg93/vscode-localllm.git (push)`;
       } else if (gitAction === 'merge') {

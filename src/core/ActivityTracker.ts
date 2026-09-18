@@ -478,8 +478,16 @@ export class ActivityTracker {
     }
     if (name === 'git_status') return 'git status';
     if (name === 'git_diff') return `git diff (${args.staged ? 'staged' : 'working tree'})`;
-    if (name === 'git_pull') return 'git pull';
-    if (name === 'git_push') return 'git push';
+    if (name === 'git_pull') return `git pull ${args.remote || ''} ${args.branch || ''}`.trim();
+    if (name === 'git_push') return `git push ${args.remote || ''} ${args.branch || ''}`.trim();
+    if (name === 'git_stash') return `git stash ${args.action || 'push'}`;
+    if (name === 'git_fetch') return `git fetch ${args.remote || ''}`.trim();
+    if (name === 'git_checkout') return `git checkout ${args.branch || ''}`.trim();
+    if (name === 'git_commit') return `git commit: "${String(args.message || '').slice(0, 30)}"`;
+    if (name === 'git_add') return `git add ${Array.isArray(args.paths) ? args.paths.join(' ') : ''}`.trim();
+    if (name === 'git_merge') return `git merge ${args.branch || ''}`.trim();
+    if (name === 'git_branch') return 'git branch';
+    if (name === 'git_remote') return 'git remote';
     if (name === 'git_log') return `git log (limit: ${args.maxCommits ?? 10})`;
     return JSON.stringify(args).slice(0, 60);
   }

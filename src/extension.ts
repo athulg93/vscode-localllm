@@ -370,8 +370,10 @@ function registerChatParticipant(
       || request.command === 'push'
       || request.command === 'status'
       || request.command === 'merge'
-      || request.command === 'remote';
-    const directGitMatch = effectivePrompt.match(/^\/?(?:git[\s-])?(pull|push|status|diff|log|branch|checkout|add|commit|merge|remote)(?:\s+(.*))?$/i);
+      || request.command === 'remote'
+      || request.command === 'stash'
+      || request.command === 'fetch';
+    const directGitMatch = effectivePrompt.match(/^\/?(?:git[\s-])?(pull|push|status|diff|log|branch|checkout|add|commit|merge|remote|stash|fetch)(?:\s+(.*))?$/i);
 
     if (isGitCommand || directGitMatch) {
       let gitAction = 'status';
@@ -380,7 +382,15 @@ function registerChatParticipant(
       if (request.command?.startsWith('git-')) {
         gitAction = request.command.slice(4).toLowerCase();
         extraArgs = effectivePrompt.trim();
-      } else if (request.command === 'pull' || request.command === 'push' || request.command === 'status' || request.command === 'merge' || request.command === 'remote') {
+      } else if (
+        request.command === 'pull' ||
+        request.command === 'push' ||
+        request.command === 'status' ||
+        request.command === 'merge' ||
+        request.command === 'remote' ||
+        request.command === 'stash' ||
+        request.command === 'fetch'
+      ) {
         gitAction = request.command;
         extraArgs = effectivePrompt.trim();
       } else if (request.command === 'git') {
@@ -417,17 +427,36 @@ function registerChatParticipant(
         if (extraArgs) toolArgs.paths = extraArgs.split(/\s+/).filter(Boolean);
       } else if (gitAction === 'commit') {
         if (extraArgs) toolArgs.message = extraArgs;
+      } else if (gitAction === 'stash') {
+        const parts = extraArgs.split(/\s+/).filter(Boolean);
+        const subAction = parts[0]?.toLowerCase();
+        if (['push', 'pop', 'apply', 'list', 'drop'].includes(subAction || '')) {
+          toolArgs.action = subAction;
+          toolArgs.message = parts.slice(1).join(' ').trim();
+        } else {
+          toolArgs.action = 'push';
+          toolArgs.message = extraArgs;
+        }
+      } else if (gitAction === 'fetch') {
+        const parts = extraArgs.split(/\s+/).filter(Boolean);
+        if (parts[0] && !parts[0].startsWith('-')) {
+          toolArgs.remote = parts[0];
+        }
+        if (parts.includes('--prune')) {
+          toolArgs.prune = true;
+        }
       }
 
       try {
         const rawResult = await gitManager.executeTool(toolName, toolArgs);
-        let parsed: { error?: string; cancelled?: boolean; message?: string } | null = null;
+        let parsed: { error?: string; cancelled?: boolean; message?: string; report?: string } | null = null;
         try {
           parsed = JSON.parse(rawResult);
         } catch {}
 
         if (parsed?.error) {
-          stream.markdown(`**Git operation failed:**\n\n${parsed.error}`);
+          const report = parsed.report || `### ⚠️ Git ${gitAction.toUpperCase()} Encountered an Error\n\n${parsed.error}`;
+          stream.markdown(`${report}\n\n<details><summary>Technical Error Log</summary>\n\n\`\`\`\n${parsed.error}\n\`\`\`\n</details>`);
         } else if (parsed?.cancelled) {
           stream.markdown(`*Git operation was cancelled by the user.*`);
         } else {
@@ -471,7 +500,8 @@ function registerChatParticipant(
         systemPrompt: [
           HUMAN_READABLE_SYSTEM_PROMPT,
           'You have bounded workspace and Git tools.',
-          'IMPORTANT FOR GIT TRANSACTIONS: When the user asks you to perform Git actions (such as pull, push, status, diff, commit, checkout, stage, branch, merge, or inspect remotes for GitHub/GitLab), DO NOT provide markdown tutorials, bash instructions, or tell the user to run commands manually in a terminal. You MUST call the corresponding git tool (such as git_pull, git_push, git_status, git_commit, git_diff, git_branch, git_checkout, git_merge, git_remote) directly via tool call.',
+          'IMPORTANT FOR GIT TRANSACTIONS: When the user asks you to perform Git actions (such as pull, push, status, diff, commit, checkout, stage, branch, merge, stash, fetch, or inspect remotes for GitHub/GitLab), DO NOT provide markdown tutorials, bash instructions, or tell the user to run commands manually in a terminal. You MUST call the corresponding git tool (such as git_pull, git_push, git_status, git_commit, git_diff, git_branch, git_checkout, git_merge, git_remote, git_stash, git_fetch) directly via tool call.',
+          'AUTONOMOUS GIT DECISION-MAKING & RECOVERY: If any Git operation encounters an issue (e.g. push rejected due to remote commits, pull blocked by dirty files or merge conflicts), diagnostic intelligence with recommended steps and safety rules will be provided in the tool result. Carefully review the diagnosis. Never perform destructive actions like force-push or reset. If the user authorized conflict resolution or syncing, call the recommended recovery tool (such as git_stash or git_pull) immediately. Otherwise, explain the problem to the user in 1-2 friendly sentences, propose the safe remediation sequence, and ask if they would like you to proceed.',
           'Use list_workspace_files to discover candidates, search_workspace to find symbols or related code, and read_file to inspect relevant line ranges.',
           'Use Git tools for repository status, diffs, history, branches, checkout, staging, commits, pushes, and pulls. Never infer Git branches from workspace filenames or file contents; use git_branch. Use git_checkout to switch branches and wait for its confirmation result.',
           'Use multiple tool calls when needed. Do not claim to have inspected a file unless a tool result provided its content.',

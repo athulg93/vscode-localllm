@@ -223,6 +223,14 @@
           {
             "name": "git-merge",
             "description": "Merge another branch into the active branch"
+          },
+          {
+            "name": "git-stash",
+            "description": "Stash or pop uncommitted workspace changes"
+          },
+          {
+            "name": "git-fetch",
+            "description": "Fetch changes and objects from remote repository"
           }
         ],
         "isSticky": true
@@ -233,6 +241,7 @@
     "dev": "vite --host 0.0.0.0 --port 3000",
     "build": "vite build",
     "lint": "tsc --noEmit",
+    "test": "tsx --test src/**/*.test.ts",
     "compile": "tsc -p tsconfig.extension.json",
     "package": "vsce package --allow-missing-repository --skip-license --no-dependencies",
     "install-extension": "npm run package && code --install-extension local-ollama-1.4.0.vsix --force",
@@ -247,6 +256,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "@vscode/vsce": "^3.9.2",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.13",
     "typescript": "^5.8.3",
     "vite": "^8.3.0"
   },

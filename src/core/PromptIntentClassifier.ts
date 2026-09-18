@@ -6,8 +6,8 @@ const INTENT_PATTERNS: Array<{ intent: PromptIntent; patterns: RegExp[] }> = [
   {
     intent: PromptIntent.GitTransaction,
     patterns: [
-      /^\/?(?:git[\s-])?(pull|push|status|diff|commit|add|checkout|branch|remote|merge|log)\b/i,
-      /\b(git[\s-]+(pull|push|commit|status|diff|add|checkout|branch|remote|merge|log))\b/i,
+      /^\/?(?:git[\s-])?(pull|push|status|diff|commit|add|checkout|branch|remote|merge|log|stash|fetch)\b/i,
+      /\b(git[\s-]+(pull|push|commit|status|diff|add|checkout|branch|remote|merge|log|stash|fetch))\b/i,
       /\b(pull|push|sync)\b[\s\S]*\b(repo|repository|remote|branch|origin|upstream|github|gitlab)\b/i,
       /\b(pull|push|sync)\s+(from|to)\s+\w+/i,
       /\b(merge|rebase)\b[\s\S]*\b(branch|mr|pr|pull request|merge request)\b/i,

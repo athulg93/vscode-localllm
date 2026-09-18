@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import * as vscode from 'vscode';
 import { Logger, ToolDefinition } from '../core/contracts';
 import { ActivityTracker } from '../core/ActivityTracker';
+import { GitErrorDiagnoser } from './GitErrorDiagnoser';
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_CHARS = 12_000;
@@ -81,6 +82,7 @@ export class GitManager {
           properties: {
             remote: { type: 'string', description: 'Configured Git remote name (e.g. origin, gitlab, upstream). Omit to use configured tracking remote.' },
             branch: { type: 'string', description: 'Git branch name (e.g. main, 1.4). Omit to use active branch.' },
+            setUpstream: { type: 'boolean', description: 'Set upstream tracking for this branch (-u / --set-upstream).' },
           },
         },
       },
@@ -92,6 +94,35 @@ export class GitManager {
           properties: {
             remote: { type: 'string', description: 'Configured Git remote name (e.g. origin, gitlab, upstream). Omit to use configured tracking remote.' },
             branch: { type: 'string', description: 'Git branch name (e.g. main, 1.4). Omit to use active branch.' },
+            rebase: { type: 'boolean', description: 'Rebase local commits on top of incoming remote branch instead of merging.' },
+            autostash: { type: 'boolean', description: 'Automatically create a temporary stash before rebase and apply it after.' },
+          },
+        },
+      },
+      {
+        name: 'git_stash',
+        description: 'Manage uncommitted changes using Git stash. action: "push" (save dirty changes), "pop" (re-apply and remove newest stash), "apply" (re-apply without removing), "list" (view stashes), "drop" (remove newest stash).',
+        parameters: {
+          type: 'object',
+          properties: {
+            action: {
+              type: 'string',
+              enum: ['push', 'pop', 'apply', 'list', 'drop'],
+              description: 'Stash action to execute. Defaults to "push".',
+            },
+            message: { type: 'string', description: 'Optional stash description message when action is "push".' },
+            includeUntracked: { type: 'boolean', description: 'Include untracked files when pushing to stash.' },
+          },
+        },
+      },
+      {
+        name: 'git_fetch',
+        description: 'Fetch latest commits, refs, and branches from a remote repository without merging.',
+        parameters: {
+          type: 'object',
+          properties: {
+            remote: { type: 'string', description: 'Configured Git remote name (e.g. origin, gitlab). Omit to fetch from default remote.' },
+            prune: { type: 'boolean', description: 'Before fetching, remove any remote-tracking references that no longer exist on remote.' },
           },
         },
       },
@@ -122,7 +153,7 @@ export class GitManager {
     let result: string;
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
-      result = this.error('No workspace folder is open.');
+      result = this.error('No workspace folder is open.', name, arguments_);
     } else {
       try {
         switch (name) {
@@ -153,6 +184,12 @@ export class GitManager {
           case 'git_pull':
             result = await this.pushOrPull(workspaceFolder.uri.fsPath, 'pull', arguments_);
             break;
+          case 'git_stash':
+            result = await this.stash(workspaceFolder.uri.fsPath, arguments_);
+            break;
+          case 'git_fetch':
+            result = await this.fetch(workspaceFolder.uri.fsPath, arguments_);
+            break;
           case 'git_remote':
             result = await this.remote(workspaceFolder.uri.fsPath);
             break;
@@ -160,12 +197,12 @@ export class GitManager {
             result = await this.merge(workspaceFolder.uri.fsPath, arguments_);
             break;
           default:
-            result = this.error(`Unknown Git tool: ${name}`);
+            result = this.error(`Unknown Git tool: ${name}`, name, arguments_);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.outputChannel.appendLine(`[Git] ${name} failed: ${message}`);
-        result = this.error(message);
+        result = this.error(message, name, arguments_);
       }
     }
 
@@ -243,7 +280,11 @@ export class GitManager {
     const rawRemote = this.getOptionalName(arguments_.remote, 'remote');
     const rawBranch = this.getOptionalName(arguments_.branch, 'branch');
     if (rawRemote === null || rawBranch === null) {
-      return this.error('Remote and branch names may contain only letters, numbers, dots, underscores, slashes, and hyphens.');
+      return this.error(
+        'Remote and branch names may contain only letters, numbers, dots, underscores, slashes, and hyphens.',
+        `git_${operation}`,
+        arguments_
+      );
     }
 
     const { remote, branch } = await this.resolveRemoteAndBranch(cwd, rawRemote, rawBranch);
@@ -254,7 +295,73 @@ export class GitManager {
       return this.cancelled();
     }
 
-    return this.run(cwd, [operation, ...(remote ? [remote] : []), ...(branch ? [branch] : [])]);
+    const flags: string[] = [];
+    if (operation === 'push' && arguments_.setUpstream === true) {
+      flags.push('--set-upstream');
+    }
+    if (operation === 'pull') {
+      if (arguments_.rebase === true) {
+        flags.push('--rebase');
+      }
+      if (arguments_.autostash === true) {
+        flags.push('--autostash');
+      }
+    }
+
+    return this.run(cwd, [operation, ...flags, ...(remote ? [remote] : []), ...(branch ? [branch] : [])]);
+  }
+
+  private async stash(cwd: string, arguments_: GitArguments): Promise<string> {
+    const rawAction = typeof arguments_.action === 'string' ? arguments_.action.trim().toLowerCase() : 'push';
+    const action = ['push', 'pop', 'apply', 'list', 'drop'].includes(rawAction) ? rawAction : 'push';
+    const message = typeof arguments_.message === 'string' ? arguments_.message.trim() : '';
+
+    if (action === 'list') {
+      return this.run(cwd, ['stash', 'list']);
+    }
+
+    let confirmPrompt = 'Execute Git stash operation?';
+    if (action === 'push') {
+      confirmPrompt = `Stash uncommitted local changes?${message ? `\nMessage: "${message}"` : ''}`;
+    } else if (action === 'pop') {
+      confirmPrompt = 'Restore and pop the newest stashed changes into your working tree?';
+    } else if (action === 'apply') {
+      confirmPrompt = 'Apply the newest stashed changes to your working tree (retaining the stash)?';
+    } else if (action === 'drop') {
+      confirmPrompt = 'Drop and permanently remove the newest stash entry?';
+    }
+
+    const approved = await this.confirm(confirmPrompt);
+    if (!approved) {
+      return this.cancelled();
+    }
+
+    const args = ['stash', action];
+    if (action === 'push') {
+      if (arguments_.includeUntracked === true) {
+        args.push('--include-untracked');
+      }
+      if (message) {
+        args.push('-m', message);
+      }
+    }
+
+    return this.run(cwd, args);
+  }
+
+  private async fetch(cwd: string, arguments_: GitArguments): Promise<string> {
+    const rawRemote = this.getOptionalName(arguments_.remote, 'remote');
+    if (rawRemote === null) {
+      return this.error(
+        'Remote name may contain only letters, numbers, dots, underscores, slashes, and hyphens.',
+        'git_fetch',
+        arguments_
+      );
+    }
+
+    const remote = rawRemote ? (await this.resolveRemoteAndBranch(cwd, rawRemote)).remote : undefined;
+    const args = ['fetch', ...(remote ? [remote] : []), ...(arguments_.prune === true ? ['--prune'] : [])];
+    return this.run(cwd, args);
   }
 
   private async resolveRemoteAndBranch(
@@ -424,8 +531,17 @@ export class GitManager {
     return value.length <= MAX_OUTPUT_CHARS ? value : `${value.slice(0, MAX_OUTPUT_CHARS)}\n[Git output truncated]`;
   }
 
-  private error(message: string): string {
-    return JSON.stringify({ error: message });
+  private error(message: string, commandName: string = 'git', commandArgs: GitArguments = {}): string {
+    const diagnosis = GitErrorDiagnoser.diagnose(commandName, message, commandArgs);
+    const report = GitErrorDiagnoser.formatDiagnosticReport(diagnosis);
+    return JSON.stringify({
+      success: false,
+      error: message,
+      category: diagnosis.category,
+      diagnosis,
+      report,
+      agentGuidance: diagnosis.agentGuidance,
+    });
   }
 
   private cancelled(): string {
