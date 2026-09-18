@@ -2,5 +2,7 @@ node_modules/
 dist/
 *.vsix
 .DS_Store
+.*.update.lock
+*.update.lock
 .local-ollama-update.lock
 *.log
