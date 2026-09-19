@@ -7,6 +7,11 @@ import { UpdateManager } from './services/UpdateManager';
 import { ActivityLogger } from './services/ActivityLogger';
 import { GitManager } from './services/GitManager';
 import { ActivityTracker } from './core/ActivityTracker';
+import { McpManager } from './services/McpManager';
+import { McpTreeDataProvider } from './services/McpTreeDataProvider';
+import { McpConfigFile } from './core/mcpTypes';
+import { SkillManager } from './services/SkillManager';
+import { SkillsTreeDataProvider } from './services/SkillsTreeDataProvider';
 import {
   FileReadsTreeDataProvider,
   PendingDiffsTreeDataProvider,
@@ -217,6 +222,8 @@ function registerChatParticipant(
   editorManager: EditorManager,
   updateManager: UpdateManager,
   gitManager: GitManager,
+  mcpManager: McpManager,
+  skillManager: SkillManager,
   extensionVersion: string,
   outputChannel: ActivityLogger,
   telemetry: ModelBehaviorTelemetry,
@@ -496,9 +503,24 @@ function registerChatParticipant(
       }
 
       const isGitRequest = promptIntent === 'gitTransaction';
+      const activeTools = [...contextManager.getFileTools(), ...gitManager.getTools(), ...mcpManager.getActiveToolDefinitions()];
+      const toolNames = new Set(activeTools.map((t) => t.name));
+      const skillsSummary = skillManager.buildPromptInjection(
+        effectivePrompt,
+        mcpManager.getServerStates(),
+        toolNames
+      );
+      if (skillsSummary.activeSkills.length > 0) {
+        outputChannel.appendLine(`[Skills] Active skills applied: ${skillsSummary.activeSkills.map((s) => s.name).join(', ')}`);
+      }
+      if (skillsSummary.suppressedSkills && skillsSummary.suppressedSkills.length > 0) {
+        outputChannel.appendLine(`[Skills] Suppressed ${skillsSummary.suppressedSkills.length} skill(s) due to token budget ceiling.`);
+      }
+
       const response = await client.sendPromptWithTools(resolvedModel, effectivePrompt, temperature, {
         systemPrompt: [
           HUMAN_READABLE_SYSTEM_PROMPT,
+          skillsSummary.injectionPromptSnippet,
           'You have bounded workspace and Git tools.',
           'IMPORTANT FOR GIT TRANSACTIONS: When the user asks you to perform Git actions (such as pull, push, status, diff, commit, checkout, stage, branch, merge, stash, fetch, or inspect remotes for GitHub/GitLab), DO NOT provide markdown tutorials, bash instructions, or tell the user to run commands manually in a terminal. You MUST call the corresponding git tool (such as git_pull, git_push, git_status, git_commit, git_diff, git_branch, git_checkout, git_merge, git_remote, git_stash, git_fetch) directly via tool call.',
           'AUTONOMOUS GIT DECISION-MAKING & RECOVERY: If any Git operation encounters an issue (e.g. push rejected due to remote commits, pull blocked by dirty files or merge conflicts), diagnostic intelligence with recommended steps and safety rules will be provided in the tool result. Carefully review the diagnosis. Never perform destructive actions like force-push or reset. If the user authorized conflict resolution or syncing, call the recommended recovery tool (such as git_stash or git_pull) immediately. Otherwise, explain the problem to the user in 1-2 friendly sentences, propose the safe remediation sequence, and ask if they would like you to proceed.',
@@ -510,10 +532,17 @@ function registerChatParticipant(
         ].filter(Boolean).join(' '),
         conversationHistory,
         token,
-        tools: [...contextManager.getFileTools(), ...gitManager.getTools()],
-        executeTool: async (name, arguments_) => name.startsWith('git_')
-          ? gitManager.executeTool(name, arguments_)
-          : contextManager.executeFileTool(name, arguments_),
+        tools: activeTools,
+        executeTool: async (name, arguments_) => {
+          if (name.startsWith('git_')) {
+            return gitManager.executeTool(name, arguments_);
+          }
+          if (mcpManager.findToolByExposedName(name)) {
+            const result = await mcpManager.executeTool(name, arguments_, token);
+            return result.output;
+          }
+          return contextManager.executeFileTool(name, arguments_);
+        },
         maxToolCalls,
         onStatus: (message) => stream.progress(message),
       });
@@ -546,6 +575,164 @@ export function activate(context: vscode.ExtensionContext) {
   const editorManager = new EditorManager(activityLogger, activityTracker);
   const updateManager = new UpdateManager(activityLogger, context.globalStorageUri);
   const gitManager = new GitManager(activityLogger, activityTracker);
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+  const mcpManager = new McpManager(workspaceRoot, activityLogger, activityTracker);
+  const mcpTreeProvider = new McpTreeDataProvider(mcpManager);
+  const mcpView = vscode.window.registerTreeDataProvider('localOllama.mcpView', mcpTreeProvider);
+
+  // Helper to load workspace .vscode/mcp.json
+  const loadWorkspaceMcpConfig = async () => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) return;
+    const mcpConfigUri = vscode.Uri.joinPath(workspaceFolder.uri, '.vscode', 'mcp.json');
+    try {
+      const bytes = await vscode.workspace.fs.readFile(mcpConfigUri);
+      const content = new TextDecoder('utf-8').decode(bytes);
+      const parsed = JSON.parse(content) as McpConfigFile;
+      await mcpManager.loadConfig(parsed);
+    } catch {
+      // mcp.json does not exist yet or is empty
+    }
+  };
+
+  void loadWorkspaceMcpConfig();
+
+  // Watch for .vscode/mcp.json changes
+  const mcpWatcher = vscode.workspace.createFileSystemWatcher('**/.vscode/mcp.json');
+  mcpWatcher.onDidChange(() => {
+    activityLogger.appendLine('[MCP] Detected .vscode/mcp.json change; reloading servers...');
+    void loadWorkspaceMcpConfig();
+  });
+  mcpWatcher.onDidCreate(() => {
+    activityLogger.appendLine('[MCP] Detected .vscode/mcp.json creation; loading servers...');
+    void loadWorkspaceMcpConfig();
+  });
+  mcpWatcher.onDidDelete(() => {
+    activityLogger.appendLine('[MCP] Detected .vscode/mcp.json deletion; stopping servers...');
+    void mcpManager.stopAll();
+  });
+
+  // Configure MCP command: opens or initializes .vscode/mcp.json
+  const configureMcpCommand = vscode.commands.registerCommand('localOllama.configureMcp', async () => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showWarningMessage('Please open a workspace folder to configure MCP servers.');
+      return;
+    }
+
+    const vscodeDirUri = vscode.Uri.joinPath(workspaceFolder.uri, '.vscode');
+    const mcpConfigUri = vscode.Uri.joinPath(vscodeDirUri, 'mcp.json');
+
+    try {
+      await vscode.workspace.fs.stat(mcpConfigUri);
+    } catch {
+      // File doesn't exist, create default template
+      const template = {
+        mcpServers: {
+          sqlite: {
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-sqlite", "--db-path", "./workspace.db"],
+            timeoutMs: 30000,
+            maxOutputLength: 8000
+          }
+        }
+      };
+      await vscode.workspace.fs.createDirectory(vscodeDirUri);
+      await vscode.workspace.fs.writeFile(mcpConfigUri, new TextEncoder().encode(JSON.stringify(template, null, 2)));
+    }
+
+    const doc = await vscode.workspace.openTextDocument(mcpConfigUri);
+    await vscode.window.showTextDocument(doc);
+  });
+
+  const restartMcpServersCommand = vscode.commands.registerCommand('localOllama.restartMcpServers', async () => {
+    await loadWorkspaceMcpConfig();
+    vscode.window.showInformationMessage('Local Ollama: MCP servers restarted.');
+  });
+
+  // Skills Manager & UI
+  const skillManager = new SkillManager(workspaceRoot, activityLogger);
+  const skillsTreeProvider = new SkillsTreeDataProvider(skillManager);
+  const skillsView = vscode.window.registerTreeDataProvider('localOllama.skillsView', skillsTreeProvider);
+
+  const loadWorkspaceSkills = async () => {
+    const skillUris = await vscode.workspace.findFiles('**/*SKILL.md', '**/node_modules/**');
+    for (const uri of skillUris) {
+      try {
+        const bytes = await vscode.workspace.fs.readFile(uri);
+        const content = new TextDecoder('utf-8').decode(bytes);
+        skillManager.registerSkillFromContent(uri.fsPath, content);
+      } catch (err) {
+        activityLogger.appendLine(`[Skills] Failed reading ${uri.fsPath}: ${err}`);
+      }
+    }
+  };
+
+  void loadWorkspaceSkills();
+
+  const skillWatcher = vscode.workspace.createFileSystemWatcher('**/*SKILL.md');
+  skillWatcher.onDidChange(async (uri) => {
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      const content = new TextDecoder('utf-8').decode(bytes);
+      skillManager.registerSkillFromContent(uri.fsPath, content);
+    } catch {
+      // ignore
+    }
+  });
+  skillWatcher.onDidCreate(async (uri) => {
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      const content = new TextDecoder('utf-8').decode(bytes);
+      skillManager.registerSkillFromContent(uri.fsPath, content);
+    } catch {
+      // ignore
+    }
+  });
+  skillWatcher.onDidDelete((uri) => {
+    const all = skillManager.getAllSkills();
+    const found = all.find((s) => s.filePath === uri.fsPath);
+    if (found) {
+      skillManager.unregisterSkill(found.id);
+    }
+  });
+
+  const createSkillCommand = vscode.commands.registerCommand('localOllama.createSkill', async () => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showWarningMessage('Please open a workspace folder to create a skill.');
+      return;
+    }
+
+    const name = await vscode.window.showInputBox({
+      prompt: 'Skill name (e.g. security-audit, api-design, tdd-workflow)',
+      placeHolder: 'tdd-workflow',
+    });
+    if (!name) return;
+
+    const desc = await vscode.window.showInputBox({
+      prompt: 'Brief description of what this skill does',
+      placeHolder: 'Enforces TDD and regression testing rules',
+    });
+
+    const safeName = name.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+    const skillDirUri = vscode.Uri.joinPath(workspaceFolder.uri, '.vscode', 'skills', safeName);
+    const skillFileUri = vscode.Uri.joinPath(skillDirUri, 'SKILL.md');
+
+    await vscode.workspace.fs.createDirectory(skillDirUri);
+    const template = SkillManager.generateSkillTemplate(safeName, desc || '');
+    await vscode.workspace.fs.writeFile(skillFileUri, new TextEncoder().encode(template));
+
+    const doc = await vscode.workspace.openTextDocument(skillFileUri);
+    await vscode.window.showTextDocument(doc);
+    vscode.window.showInformationMessage(`Created skill "${safeName}".`);
+  });
+
+  const refreshSkillsCommand = vscode.commands.registerCommand('localOllama.refreshSkills', async () => {
+    await loadWorkspaceSkills();
+    skillsTreeProvider.refresh();
+    vscode.window.showInformationMessage('Local Ollama: Skills refreshed.');
+  });
 
   // Configure ActivityTracker settings and persistence
   const retentionDays = getSetting<number>('activityRetentionDays', 7);
@@ -766,11 +953,19 @@ export function activate(context: vscode.ExtensionContext) {
     pendingDiffsView,
     toolCallsView,
     fileReadsView,
+    mcpView,
+    configureMcpCommand,
+    restartMcpServersCommand,
+    mcpWatcher,
+    skillsView,
+    createSkillCommand,
+    refreshSkillsCommand,
+    skillWatcher,
     clearActivityCommand,
     refreshActivityCommand,
     reviewPlanCommand,
   );
-  registerChatParticipant(context, contextManager, editorManager, updateManager, gitManager, extensionVersion, activityLogger, telemetry, activityTracker);
+  registerChatParticipant(context, contextManager, editorManager, updateManager, gitManager, mcpManager, skillManager, extensionVersion, activityLogger, telemetry, activityTracker);
 }
 
 export function deactivate() {

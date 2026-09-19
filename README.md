@@ -21,6 +21,8 @@ Local Ollama connects the **VS Code Chat** experience to an **Ollama server** ru
 - [Install](#install)
 - [Get Started](#get-started)
 - [Chat Usage](#chat-usage)
+- [Model Context Protocol (MCP)](#model-context-protocol-mcp)
+- [Procedural Skills (Playbooks)](#procedural-skills-playbooks)
 - [Model Switching and Capabilities](#model-switching-and-capabilities)
 - [Workspace Awareness](#workspace-awareness)
 - [Editing Workflow](#editing-workflow)
@@ -146,6 +148,78 @@ List available models with `@` on its own:
 ```
 
 You can also use **Local Ollama: Select Model** or **Local Ollama: List Models** from the Command Palette.
+
+## Model Context Protocol (MCP)
+
+Local Ollama supports the **Model Context Protocol (MCP)** specification, allowing local models to interact with custom tools, databases, enterprise APIs, and local services without exposing secrets or source code.
+
+### Standard Configuration (`.vscode/mcp.json`)
+
+MCP servers are configured in the standard VS Code workspace location at `.vscode/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "sqlite": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sqlite", "--db-path", "./workspace.db"],
+      "timeoutMs": 30000,
+      "maxOutputLength": 8000
+    },
+    "remote-api": {
+      "url": "http://localhost:8080/sse",
+      "headers": {
+        "Authorization": "Bearer local-dev-token"
+      },
+      "timeoutMs": 15000
+    }
+  }
+}
+```
+
+### Supported Transports & Features
+- **Transports**: `stdio` (local processes with environment isolation) and `sse` (Server-Sent Events for local/remote services).
+- **Automated Lifecycle Supervision**: Dynamic process management with auto-restart, heartbeat checks, and error logging.
+- **Context Window Budgeting**: Real-time token estimation of discovered tool schemas to ensure small models (7B/8B) do not exceed their context window envelope (&lt;25% recommended).
+- **Proactive Safety & Loop Breaker**: Auto-redacts secret tokens (`token`, `secret`, `password`, `key`) from logs, strictly enforces timeouts, truncates oversized outputs, and breaks repetitive identical tool call loops.
+- **User Extensibility & Shims**: If an external MCP script behaves unexpectedly, users can override parameters, use custom CLI wrappers, or toggle individual tools on and off directly from the **Model Context Protocol** sidebar view or `.vscode/mcp.json`.
+
+Commands:
+- `Local Ollama: Configure MCP Servers (.vscode/mcp.json)` — Create or open the workspace configuration.
+- `Local Ollama: Restart MCP Servers` — Reload server configurations and reconnect processes.
+
+## Procedural Skills (Playbooks)
+
+Procedural Skills teach local LLMs repeatable, high-reliability engineering playbooks directly in standard Markdown with YAML frontmatter. Skills are discovered automatically from `.vscode/skills/**/SKILL.md` or `.skills/**/SKILL.md`.
+
+### Anatomy of a Skill (`SKILL.md`)
+
+```markdown
+---
+name: tdd-refactor
+description: Enforces test-driven development, regression safety, and modular refactoring guidelines.
+triggers: ["test", "refactor", "tdd", "unit test"]
+autoTrigger: true
+requiresTools: []
+---
+
+# Test-Driven Development (TDD) Playbook
+
+## Core Principles
+1. Never break existing public APIs without deprecation notices.
+2. Red-Green-Refactor: inspect or write tests before modifying production code.
+3. Keep diffs surgical and atomic.
+```
+
+### Key Skill Features
+- **Prompt Trigger Matching**: Auto-activates skills based on natural language keywords or explicit `@skill-name` mentions in chat.
+- **MCP Bridge**: Skills can declare required MCP tools (`requiresTools`), guiding the model on the exact sequence to query databases or invoke external tools safely.
+- **Token Efficiency**: Inactive skills are presented to the model only as a single-line summary catalog, injecting full instructions only when triggered to conserve context tokens.
+- **Visual Management**: Toggle skills on/off, inspect token budgets, create new skills, and jump to `SKILL.md` directly from the **Procedural Skills** sidebar tab or tree view.
+
+Commands:
+- `Local Ollama: Create New Procedural Skill` — Scaffold a new `SKILL.md` template in `.vscode/skills/<name>/SKILL.md`.
+- `Local Ollama: Refresh Skills` — Rescan the workspace for skill definitions.
 
 ## Model Switching and Capabilities
 

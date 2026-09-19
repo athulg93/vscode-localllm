@@ -7,9 +7,11 @@ import {
   ArrowUpCircle,
   FolderGit2,
   Activity,
+  Server,
+  Sparkles,
 } from 'lucide-react';
 
-export type ActiveSidebarTab = 'explorer' | 'chat' | 'logs' | 'settings' | 'updates';
+export type ActiveSidebarTab = 'explorer' | 'chat' | 'logs' | 'mcp' | 'skills' | 'settings' | 'updates';
 
 interface ActivityBarProps {
   activeTab: ActiveSidebarTab;
@@ -37,6 +39,16 @@ export const ActivityBar: React.FC<ActivityBarProps> = ({
       id: 'explorer',
       label: 'Workspace Explorer',
       icon: <Files className="w-5 h-5" />,
+    },
+    {
+      id: 'mcp',
+      label: 'Model Context Protocol (MCP Servers)',
+      icon: <Server className="w-5 h-5" />,
+    },
+    {
+      id: 'skills',
+      label: 'Procedural Skills (Playbooks)',
+      icon: <Sparkles className="w-5 h-5" />,
     },
     {
       id: 'logs',

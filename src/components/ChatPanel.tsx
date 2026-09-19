@@ -201,8 +201,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const samplePrompts = [
     { label: '/git status', text: '@localllm /git status' },
     { label: '/git diff', text: '@localllm /git diff' },
-    { label: '/git pull', text: '@localllm /git pull' },
-    { label: '/git push', text: '@localllm /git push' },
+    { label: '@tdd-workflow', text: '@localllm @tdd-workflow write unit tests for AuthService' },
+    { label: '@secure-code-review', text: '@localllm @secure-code-review audit authentication endpoints' },
     { label: '/edit Input Validation', text: '@localllm /edit Add password length validation and account lockout to AuthService' },
     { label: '/refactor Health Check', text: '@localllm /refactor Add health check endpoint and error wrapper in routes.ts' },
     { label: '/models', text: '@localllm /models' },

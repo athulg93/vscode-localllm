@@ -78,6 +78,22 @@
       {
         "command": "localOllama.reviewPlan",
         "title": "Local Ollama: Review Proposed Edit Plan"
+      },
+      {
+        "command": "localOllama.configureMcp",
+        "title": "Local Ollama: Configure MCP Servers (.vscode/mcp.json)"
+      },
+      {
+        "command": "localOllama.restartMcpServers",
+        "title": "Local Ollama: Restart MCP Servers"
+      },
+      {
+        "command": "localOllama.createSkill",
+        "title": "Local Ollama: Create New Procedural Skill"
+      },
+      {
+        "command": "localOllama.refreshSkills",
+        "title": "Local Ollama: Refresh Skills"
       }
     ],
     "viewsContainers": {
@@ -91,6 +107,14 @@
     },
     "views": {
       "local-ollama-activity": [
+        {
+          "id": "localOllama.skillsView",
+          "name": "Procedural Skills (Playbooks)"
+        },
+        {
+          "id": "localOllama.mcpView",
+          "name": "Model Context Protocol (MCP)"
+        },
         {
           "id": "localOllama.summaryView",
           "name": "Session & Hardware Performance"

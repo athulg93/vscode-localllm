@@ -6,6 +6,8 @@ import { ChatPanel, ChatMessageItem } from './components/ChatPanel';
 import { ActivityPanel } from './components/ActivityPanel';
 import { SettingsPanel, ExtensionSettings } from './components/SettingsPanel';
 import { UpdatePanel } from './components/UpdatePanel';
+import { McpPanel } from './components/McpPanel';
+import { SkillsPanel } from './components/SkillsPanel';
 import { EditorArea } from './components/EditorArea';
 import { EditPlanModal } from './components/EditPlanModal';
 import { StatusBar } from './components/StatusBar';
@@ -13,6 +15,10 @@ import { StatusBar } from './components/StatusBar';
 import { WebWorkspace } from './web/WebWorkspace';
 import { WebLogger, LogEntry } from './web/WebLogger';
 import { WebOllamaProvider, SIMULATED_MODELS } from './web/WebOllamaProvider';
+import { McpManager } from './services/McpManager';
+import { McpConfigFile, McpServerState } from './core/mcpTypes';
+import { SkillManager } from './services/SkillManager';
+import { SkillDefinition } from './core/skillTypes';
 import { classifyPromptIntent } from './core/PromptIntentClassifier';
 import { parseEditPlan } from './core/EditPlanParser';
 import { globalActivityTracker } from './core/ActivityTracker';
@@ -30,9 +36,14 @@ export function App() {
   const logger = useMemo(() => new WebLogger(), []);
   const workspace = useMemo(() => new WebWorkspace(), []);
   const provider = useMemo(() => new WebOllamaProvider(DEFAULT_BASE_URL, logger), [logger]);
+  const mcpManager = useMemo(() => new McpManager('/', logger, globalActivityTracker), [logger]);
+  const skillManager = useMemo(() => new SkillManager('/', logger), [logger]);
 
   // State
   const [activeTab, setActiveTab] = useState<ActiveSidebarTab>('chat');
+  const [mcpServers, setMcpServers] = useState<McpServerState[]>([]);
+  const [mcpBudget, setMcpBudget] = useState(() => mcpManager.getContextBudgetReport());
+  const [skills, setSkills] = useState<SkillDefinition[]>([]);
   const [files, setFiles] = useState(() => workspace.getAllFiles());
   const [activeFile, setActiveFile] = useState<string>('src/auth/AuthService.ts');
   const [openTabs, setOpenTabs] = useState<string[]>([
@@ -90,6 +101,47 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
     });
     return unsubscribe;
   }, [logger, settings.defaultModel]);
+
+  // Subscribe to MCP updates & initial load
+  useEffect(() => {
+    const unsubscribeMcp = mcpManager.subscribe(() => {
+      setMcpServers(mcpManager.getServerStates());
+      setMcpBudget(mcpManager.getContextBudgetReport());
+    });
+
+    const mcpRaw = workspace.getFile('.vscode/mcp.json');
+    if (mcpRaw) {
+      try {
+        const parsed = JSON.parse(mcpRaw) as McpConfigFile;
+        void mcpManager.loadConfig(parsed);
+      } catch (err) {
+        logger.appendLine(`[MCP] Failed to parse .vscode/mcp.json: ${err}`);
+      }
+    }
+
+    return () => {
+      unsubscribeMcp();
+      void mcpManager.stopAll();
+    };
+  }, [mcpManager, workspace, logger]);
+
+  // Subscribe to Skills updates & scan workspace skills
+  useEffect(() => {
+    const unsubscribeSkills = skillManager.subscribe(() => {
+      setSkills(skillManager.getAllSkills());
+    });
+
+    // Scan all files for SKILL.md
+    for (const file of files) {
+      if (file.path.endsWith('SKILL.md')) {
+        skillManager.registerSkillFromContent(file.path, file.content);
+      }
+    }
+
+    return () => {
+      unsubscribeSkills();
+    };
+  }, [skillManager, files]);
 
   // Initial connection test
   const handleCheckConnection = async () => {
@@ -346,14 +398,26 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
     };
 
     try {
+      const activeTools = [...workspace.getTools(), ...mcpManager.getActiveToolDefinitions()];
+      const toolNames = new Set(activeTools.map((t) => t.name));
+      const skillsSummary = skillManager.buildPromptInjection(text, mcpServers, toolNames);
+      if (skillsSummary.activeSkills.length > 0) {
+        logger.appendLine(`[Skills] Auto-activated ${skillsSummary.activeSkills.length} skill(s) for prompt: ${skillsSummary.activeSkills.map((s) => s.name).join(', ')}`);
+      }
+      if (skillsSummary.suppressedSkills && skillsSummary.suppressedSkills.length > 0) {
+        logger.appendLine(`[Skills] Suppressed ${skillsSummary.suppressedSkills.length} skill(s) due to token budget limit (${skillManager.getMaxSkillTokens()} tokens).`);
+      }
+
+      const combinedSystemPrompt = `${HUMAN_READABLE_SYSTEM_PROMPT}${skillsSummary.injectionPromptSnippet}`;
+
       const response = await provider.sendPromptWithTools(
         modelToUse,
         text,
         settings.temperature,
         {
-          systemPrompt: HUMAN_READABLE_SYSTEM_PROMPT,
+          systemPrompt: combinedSystemPrompt,
           token,
-          tools: workspace.getTools(),
+          tools: activeTools,
           executeTool: async (name, args) => {
             setMessages((prev) =>
               prev.map((m) =>
@@ -365,7 +429,7 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
                         ...(m.toolCalls || []),
                         {
                           name,
-                          target: (args.path as string) || (args.query as string) || undefined,
+                          target: (args.path as string) || (args.query as string) || (args.sql as string) || undefined,
                           status: 'executing',
                         },
                       ],
@@ -373,6 +437,10 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
                   : m
               )
             );
+            if (mcpManager.findToolByExposedName(name)) {
+              const res = await mcpManager.executeTool(name, args, token);
+              return res.output;
+            }
             return workspace.executeTool(name, args);
           },
           maxToolCalls: settings.maxToolCalls,
@@ -589,6 +657,69 @@ Try one of the quick prompt buttons below, or ask a question about \`AuthService
               onSelectFile={handleSelectFile}
               onCreateFile={handleCreateFile}
               onDeleteFile={handleDeleteFile}
+            />
+          )}
+
+          {activeTab === 'mcp' && (
+            <McpPanel
+              servers={mcpServers}
+              budgetReport={mcpBudget}
+              onToggleTool={(name, enabled) => mcpManager.setToolEnabled(name, enabled)}
+              onRestartServers={async () => {
+                const raw = workspace.getFile('.vscode/mcp.json');
+                if (raw) {
+                  try {
+                    await mcpManager.loadConfig(JSON.parse(raw));
+                    logger.appendLine('[MCP] Servers reloaded successfully.');
+                  } catch (e: any) {
+                    logger.appendLine(`[MCP] Reload failed: ${e.message}`);
+                  }
+                }
+              }}
+              onOpenMcpConfig={() => {
+                handleSelectFile('.vscode/mcp.json');
+              }}
+            />
+          )}
+
+          {activeTab === 'skills' && (
+            <SkillsPanel
+              skills={skills}
+              mcpServers={mcpServers}
+              onToggleSkill={(id, enabled) => skillManager.setSkillEnabled(id, enabled)}
+              onSelectSkill={(skill) => handleSelectFile(skill.filePath)}
+              onCreateSkill={async () => {
+                const skillName = `custom-workflow-${Date.now().toString(36).slice(-4)}`;
+                const filePath = `.vscode/skills/${skillName}/SKILL.md`;
+                const content = SkillManager.generateSkillTemplate(skillName, 'Automated procedural task guidance');
+                workspace.setFile(filePath, content);
+                setFiles(workspace.getAllFiles());
+                skillManager.registerSkillFromContent(filePath, content);
+                handleSelectFile(filePath);
+              }}
+              onDeleteSkill={(id) => {
+                const skill = skillManager.getSkill(id);
+                if (skill) {
+                  workspace.deleteFile(skill.filePath);
+                  setFiles(workspace.getAllFiles());
+                  skillManager.unregisterSkill(id);
+                }
+              }}
+              onStartMcpServer={async (serverName) => {
+                const raw = workspace.getFile('.vscode/mcp.json');
+                if (raw) {
+                  try {
+                    const parsed = JSON.parse(raw);
+                    const serverConfig = parsed.mcpServers?.[serverName];
+                    if (serverConfig) {
+                      await mcpManager.startServer(serverName, serverConfig);
+                      logger.appendLine(`[MCP] Restarted server "${serverName}" requested by Skill panel.`);
+                    }
+                  } catch (e: any) {
+                    logger.appendLine(`[MCP] Failed to start server "${serverName}": ${e.message}`);
+                  }
+                }
+              }}
             />
           )}
 

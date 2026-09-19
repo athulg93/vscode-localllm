@@ -218,6 +218,7 @@ export class OllamaClient implements ModelProvider {
     let toolCallCount = 0;
     let completionChecks = 0;
     let state: AgentLoopState;
+    const callSignatureHistory: string[] = [];
 
     while (true) {
       if (options.token?.isCancellationRequested) {
@@ -291,7 +292,22 @@ export class OllamaClient implements ModelProvider {
         await this.telemetry?.record(model, 'toolCalls');
 
         const name = toolCall.function?.name ?? '';
-        options.onStatus?.(`Reading workspace context${toolCallCount > 1 ? ` (${toolCallCount}/${maxToolCalls})` : ''}...`);
+        const argsJson = JSON.stringify(toolCall.function?.arguments ?? {});
+        const callSig = `${name}:${argsJson}`;
+        callSignatureHistory.push(callSig);
+
+        // Check for 3 consecutive identical calls
+        const recent = callSignatureHistory.slice(-3);
+        if (recent.length === 3 && recent.every((s) => s === callSig)) {
+          this.outputChannel.appendLine(`[Ollama] Duplicate call loop detected on tool "${name}". Breaking loop.`);
+          messages.push({
+            role: 'user',
+            content: `NOTICE: You have invoked tool "${name}" with identical arguments 3 times in a row without making forward progress. Stop calling this tool and provide the best response possible with the information gathered so far, or ask the user for guidance.`,
+          });
+          break;
+        }
+
+        options.onStatus?.(`Executing operation${toolCallCount > 1 ? ` (${toolCallCount}/${maxToolCalls})` : ''}...`);
         const toolResult = await options.executeTool(name, toolCall.function?.arguments ?? {});
 
         let toolContent = toolResult;

@@ -104,5 +104,63 @@ Try asking the model:
 - \`@localllm /edit Add rate limiting to routes.ts\`
 - \`@localllm /refactor Extract error handling into a dedicated middleware\`
 - \`@localllm Explain how authentication works in this project\`
+`,
+  '.vscode/mcp.json': `{
+  "mcpServers": {
+    "sqlite": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sqlite", "--db-path", "./workspace.db"],
+      "timeoutMs": 30000,
+      "maxOutputLength": 8000
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "timeoutMs": 20000
+    }
+  }
+}
+`,
+  '.vscode/skills/tdd-refactor/SKILL.md': `---
+name: tdd-refactor
+description: Enforces test-driven development, regression safety, and modular refactoring guidelines.
+triggers: ["test", "refactor", "tdd", "unit test", "spec"]
+autoTrigger: true
+requiresTools: []
+---
+
+# Test-Driven Development (TDD) & Safe Refactoring Playbook
+
+## Core Principles
+1. **Never break existing public APIs**: Retain backwards compatibility for exported functions and classes.
+2. **Red-Green-Refactor**:
+   - Write or inspect the test suite before modifying production logic.
+   - Run tests or check assertions after every discrete edit.
+3. **Small, Atomic Diffs**: Avoid massive multi-file rewrites. Keep edits surgical and verifiable.
+
+## Workflow Checklist
+- [ ] Identify candidate functions or methods to refactor.
+- [ ] Ensure edge cases (null, undefined, invalid types, empty arrays) are covered by tests.
+- [ ] Refactor logic incrementally, maintaining clean variable naming and modular helpers.
+- [ ] Verify no unused imports or lint warnings are introduced.
+`,
+  '.vscode/skills/database-safety/SKILL.md': `---
+name: database-safety
+description: Enforces safe query practices, transactions, indexing, and protection against destructive operations.
+triggers: ["sql", "database", "sqlite", "query", "migration", "table"]
+autoTrigger: true
+requiresTools: ["sqlite__query_workspace_db"]
+---
+
+# Database Operations & Query Safety Playbook
+
+## Safety Mandates
+1. **Never run destructive SQL without explicit criteria**:
+   - \`DELETE\` and \`UPDATE\` queries MUST include a precise \`WHERE\` clause.
+   - Never execute \`DROP TABLE\` or \`TRUNCATE\` without prompting the user first.
+2. **Read-First Pattern**:
+   - Always run \`EXPLAIN QUERY PLAN\` or verify table schemas before proposing complex joins.
+3. **Limit Results**:
+   - Append \`LIMIT 50\` or pagination to unknown SELECT queries to avoid blowing the context window.
 `
 };
