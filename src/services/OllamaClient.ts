@@ -416,17 +416,25 @@ export class OllamaClient implements ModelProvider {
       const promptEvalCount = lastDoneChunk?.prompt_eval_count || Math.max(1, Math.round(prompt.length / 3.8));
       const evalDurationSeconds = lastDoneChunk?.eval_duration ? lastDoneChunk.eval_duration / 1e9 : 0.001;
       const tokensPerSecond = evalDurationSeconds > 0 ? evalCount / evalDurationSeconds : undefined;
+      const roundedTokPerSec = tokensPerSecond ? Math.round(tokensPerSecond * 10) / 10 : undefined;
       this.activityTracker.recordChatSession({
         model,
         userPromptChars: prompt.length,
         agentResponseChars: responseText.length,
         promptTokens: promptEvalCount,
         generatedTokens: evalCount,
-        tokensPerSecond: tokensPerSecond ? Math.round(tokensPerSecond * 10) / 10 : undefined,
+        tokensPerSecond: roundedTokPerSec,
         durationMs: lastDoneChunk?.total_duration ? Math.round(lastDoneChunk.total_duration / 1e6) : 0,
         timeToFirstTokenMs: lastDoneChunk?.prompt_eval_duration ? Math.round(lastDoneChunk.prompt_eval_duration / 1e6) : undefined,
       });
       void this.refreshHardwareStats(model);
+
+      if (typeof (this.outputChannel as any).appendSummary === 'function') {
+        (this.outputChannel as any).appendSummary(
+          `Inference Completed [${model}]`,
+          `${evalCount} tokens generated (${roundedTokPerSec ?? 'n/a'} tok/s), prompt=${promptEvalCount} tokens`
+        );
+      }
     }
 
     return responseText;

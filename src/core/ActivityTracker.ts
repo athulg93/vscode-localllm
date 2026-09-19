@@ -93,6 +93,13 @@ export interface ActivitySummaryMetrics {
   hardware: HardwareMemoryStats;
   dataLeakageBytes: number;
   oldestEntryTimestamp?: number;
+  // Aggregated analytics rollups for executive summary
+  totalToolInvocations: number;
+  toolSuccessRatePercent: number;
+  topToolsUsed: { name: string; count: number }[];
+  totalFilesRead: number;
+  totalLinesInspected: number;
+  totalFileBytesRead: number;
 }
 
 export class ActivityTracker {
@@ -232,6 +239,31 @@ export class ActivityTracker {
     const agentResponsesCount = activeSessions.length;
     const oldestEntryTimestamp = activeSessions.length > 0 ? Math.min(...activeSessions.map((s) => s.timestamp)) : undefined;
 
+    // Compute tool analytics rollups
+    const activeToolCalls = this.toolCalls.filter((t) => t.timestampRaw >= cutoff);
+    const totalToolInvocations = activeToolCalls.length;
+    const successfulTools = activeToolCalls.filter((t) => t.status === 'success').length;
+    const toolSuccessRatePercent = totalToolInvocations > 0 ? Math.round((successfulTools / totalToolInvocations) * 100) : 100;
+
+    const toolFrequencyMap: Record<string, number> = {};
+    for (const call of activeToolCalls) {
+      toolFrequencyMap[call.toolName] = (toolFrequencyMap[call.toolName] || 0) + 1;
+    }
+    const topToolsUsed = Object.entries(toolFrequencyMap)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    // Compute file read analytics rollups
+    const activeFileReads = this.fileReads.filter((f) => f.timestampRaw >= cutoff);
+    const totalFilesRead = activeFileReads.length;
+    let totalLinesInspected = 0;
+    let totalFileBytesRead = 0;
+    for (const read of activeFileReads) {
+      totalLinesInspected += read.lineCount || 0;
+      totalFileBytesRead += read.charCount || 0;
+    }
+
     return {
       retentionDays: this.retentionDays,
       viewMode: this.viewMode,
@@ -248,6 +280,12 @@ export class ActivityTracker {
       hardware: { ...this.hardwareStats },
       dataLeakageBytes: 0,
       oldestEntryTimestamp,
+      totalToolInvocations,
+      toolSuccessRatePercent,
+      topToolsUsed,
+      totalFilesRead,
+      totalLinesInspected,
+      totalFileBytesRead,
     };
   }
 

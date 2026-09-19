@@ -57,7 +57,15 @@
       },
       {
         "command": "localOllama.openActivityLog",
-        "title": "Local Ollama: Open Activity Log"
+        "title": "Local Ollama: Open Activity Log (Summary or Detailed)"
+      },
+      {
+        "command": "localOllama.openSummaryLog",
+        "title": "Local Ollama: Open Executive Summary Log"
+      },
+      {
+        "command": "localOllama.openDetailedLog",
+        "title": "Local Ollama: Open Detailed Step-by-Step Log"
       },
       {
         "command": "localOllama.clearActivityHistory",

@@ -14,7 +14,9 @@ import {
   Calendar,
   CheckCircle2,
   AlertCircle,
-  RotateCcw
+  RotateCcw,
+  Wrench,
+  FileText
 } from 'lucide-react';
 import { ActivitySummaryMetrics } from '../core/ActivityTracker';
 
@@ -277,6 +279,46 @@ export const ActivitySummaryView: React.FC<ActivitySummaryViewProps> = ({
               <span>Window Policy:</span>
               <span className="text-blue-400 font-mono">Sliding Bounded Context (Anti-OOM)</span>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Workspace & Tool Activity Rollups (Executive Summary) */}
+      <div className="bg-[#212121] border border-[#2d2d2d] rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between border-b border-[#2d2d2d] pb-2.5">
+          <div className="flex items-center gap-2">
+            <Wrench className="w-4 h-4 text-emerald-400" />
+            <h3 className="text-sm font-semibold text-neutral-200">Workspace & Tool Execution Summary</h3>
+          </div>
+          <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-950/40 text-emerald-300 border border-emerald-500/30">
+            {metrics.toolSuccessRatePercent ?? 100}% Success Rate
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="bg-[#191919] p-3 rounded border border-[#292929] space-y-1">
+            <div className="text-[11px] text-neutral-400 font-medium">Tool Invocations</div>
+            <div className="text-lg font-bold font-mono text-neutral-100">{metrics.totalToolInvocations ?? 0} calls</div>
+            <div className="text-[10px] text-neutral-500">Autonomous workspace actions</div>
+          </div>
+
+          <div className="bg-[#191919] p-3 rounded border border-[#292929] space-y-1">
+            <div className="text-[11px] text-neutral-400 font-medium flex items-center gap-1">
+              <FileText className="w-3 h-3 text-blue-400" />
+              Files Inspected
+            </div>
+            <div className="text-lg font-bold font-mono text-neutral-100">{metrics.totalFilesRead ?? 0} files</div>
+            <div className="text-[10px] text-neutral-500">{(metrics.totalLinesInspected ?? 0).toLocaleString()} lines scanned</div>
+          </div>
+
+          <div className="bg-[#191919] p-3 rounded border border-[#292929] space-y-1">
+            <div className="text-[11px] text-neutral-400 font-medium">Most Used Tools</div>
+            <div className="text-xs font-mono text-neutral-200 truncate">
+              {metrics.topToolsUsed && metrics.topToolsUsed.length > 0
+                ? metrics.topToolsUsed.slice(0, 2).map((t) => `${t.name} (${t.count})`).join(', ')
+                : 'None yet'}
+            </div>
+            <div className="text-[10px] text-neutral-500">Top execution operations</div>
           </div>
         </div>
       </div>

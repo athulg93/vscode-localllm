@@ -536,10 +536,11 @@ function registerChatParticipant(
 export function activate(context: vscode.ExtensionContext) {
   const outputChannel = vscode.window.createOutputChannel('Local Ollama');
   const logDirectory = context.globalStorageUri;
-  const logUri = vscode.Uri.joinPath(logDirectory, 'activity.log');
-  const activityLogger = new ActivityLogger(outputChannel, logDirectory, logUri);
+  const detailedLogUri = vscode.Uri.joinPath(logDirectory, 'detailed-activity.log');
+  const summaryLogUri = vscode.Uri.joinPath(logDirectory, 'summary-activity.log');
+  const activityLogger = new ActivityLogger(outputChannel, logDirectory, detailedLogUri, summaryLogUri);
   const telemetry = new ModelBehaviorTelemetry(context.globalState);
-  activityLogger.appendLine(`[Lifecycle] Extension activated; version=${context.extension.packageJSON.version ?? 'unknown'}; log=${activityLogger.logPath}.`);
+  activityLogger.appendLine(`[Lifecycle] Extension activated; version=${context.extension.packageJSON.version ?? 'unknown'}; summary=${activityLogger.summaryLogPath}; detailed=${activityLogger.detailedLogPath}.`);
   const activityTracker = new ActivityTracker();
   const contextManager = new ContextManager(activityLogger, activityTracker);
   const editorManager = new EditorManager(activityLogger, activityTracker);
@@ -728,7 +729,24 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   const openActivityLogCommand = vscode.commands.registerCommand('localOllama.openActivityLog', async () => {
-    await vscode.window.showTextDocument(logUri, { preview: false });
+    const choice = await vscode.window.showQuickPick(
+      [
+        { label: 'Executive Summary Log', description: 'High-level milestones, metrics & sessions', uri: summaryLogUri },
+        { label: 'Detailed Steps Log', description: 'Raw tool calls, prompts, diffs & debug steps', uri: detailedLogUri },
+      ],
+      { placeHolder: 'Select Activity Log to Open (Rotated Weekly)' }
+    );
+    if (choice) {
+      await vscode.window.showTextDocument(choice.uri, { preview: false });
+    }
+  });
+
+  const openSummaryLogCommand = vscode.commands.registerCommand('localOllama.openSummaryLog', async () => {
+    await vscode.window.showTextDocument(summaryLogUri, { preview: false });
+  });
+
+  const openDetailedLogCommand = vscode.commands.registerCommand('localOllama.openDetailedLog', async () => {
+    await vscode.window.showTextDocument(detailedLogUri, { preview: false });
   });
 
   context.subscriptions.push(
@@ -742,6 +760,8 @@ export function activate(context: vscode.ExtensionContext) {
     updateFromWorkspaceCommand,
     updateCommand,
     openActivityLogCommand,
+    openSummaryLogCommand,
+    openDetailedLogCommand,
     summaryView,
     pendingDiffsView,
     toolCallsView,

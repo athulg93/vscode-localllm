@@ -61,7 +61,8 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
   const [expandedReadId, setExpandedReadId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [rawFilter, setRawFilter] = useState<'all' | 'tool' | 'edit' | 'error'>('all');
+  const [rawFilter, setRawFilter] = useState<'all' | 'summary' | 'tool' | 'edit' | 'error'>('all');
+  const [logStreamType, setLogStreamType] = useState<'summary' | 'detailed'>('summary');
 
   useEffect(() => {
     const unsubscribe = globalActivityTracker.subscribe(() => {
@@ -602,13 +603,49 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
         {/* TAB 4: RAW LOG */}
         {viewMode === 'both' && activeTab === 'raw' && (
           <div className="space-y-2">
+            {/* Stream Selection: Summary File vs Detailed File */}
+            <div className="bg-[#181818] border border-[#2d2d2d] rounded p-2 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+              <div className="flex items-center gap-1">
+                <span className="text-neutral-400 text-[11px]">Log File:</span>
+                <button
+                  id="raw-log-summary-btn"
+                  onClick={() => setLogStreamType('summary')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                    logStreamType === 'summary'
+                      ? 'bg-emerald-700 text-white shadow-sm'
+                      : 'text-neutral-400 hover:text-white bg-[#242424]'
+                  }`}
+                  title="summary-activity.log (Executive Milestones & Metrics)"
+                >
+                  summary-activity.log
+                </button>
+                <button
+                  id="raw-log-detailed-btn"
+                  onClick={() => setLogStreamType('detailed')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                    logStreamType === 'detailed'
+                      ? 'bg-blue-700 text-white shadow-sm'
+                      : 'text-neutral-400 hover:text-white bg-[#242424]'
+                  }`}
+                  title="detailed-activity.log (All Granular Steps & Tool Calls)"
+                >
+                  detailed-activity.log
+                </button>
+              </div>
+
+              <div className="text-[10px] text-neutral-500">
+                Rotated weekly (7-day lifecycle)
+              </div>
+            </div>
+
             <div className="flex items-center justify-between text-xs font-mono mb-2">
               <select
                 value={rawFilter}
                 onChange={(e) => setRawFilter(e.target.value as any)}
                 className="bg-[#181818] border border-[#333333] rounded px-2 py-1 text-xs text-white focus:outline-none"
               >
-                <option value="all">All Logs ({logs.length})</option>
+                <option value="all">All Events</option>
+                <option value="summary">Summary Milestones</option>
                 <option value="tool">Tools Only</option>
                 <option value="edit">Edits Only</option>
                 <option value="error">Errors Only</option>
@@ -616,7 +653,19 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
 
               <button
                 onClick={() => {
-                  const text = logs.map((l) => `[${l.timestamp}] ${l.message}`).join('\n');
+                  const displayLogs = logs.filter((l) => {
+                    if (logStreamType === 'summary') {
+                      return (
+                        l.type === 'summary' ||
+                        l.message.startsWith('[Lifecycle]') ||
+                        l.message.startsWith('[Session]') ||
+                        l.message.startsWith('[Ollama] Stream completed') ||
+                        l.message.startsWith('[SUMMARY]')
+                      );
+                    }
+                    return true;
+                  });
+                  const text = displayLogs.map((l) => `[${l.timestamp}] ${l.message}`).join('\n');
                   handleCopy('raw-logs', text);
                 }}
                 className="flex items-center gap-1 text-[11px] text-neutral-400 hover:text-white"
@@ -626,19 +675,33 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
                 ) : (
                   <Copy className="w-3 h-3" />
                 )}
-                <span>Copy Output</span>
+                <span>Copy Current View</span>
               </button>
             </div>
 
-            <div className="font-mono text-[11px] leading-relaxed space-y-1">
+            <div className="font-mono text-[11px] leading-relaxed space-y-1 max-h-[420px] overflow-y-auto">
               {logs
-                .filter((l) => rawFilter === 'all' || l.type === rawFilter)
+                .filter((l) => {
+                  if (logStreamType === 'summary') {
+                    const isSummary =
+                      l.type === 'summary' ||
+                      l.message.startsWith('[Lifecycle]') ||
+                      l.message.startsWith('[Session]') ||
+                      l.message.startsWith('[Ollama] Stream completed') ||
+                      l.message.startsWith('[Ollama] Agent loop completed') ||
+                      l.message.startsWith('[SUMMARY]');
+                    if (!isSummary) return false;
+                  }
+                  return rawFilter === 'all' || l.type === rawFilter;
+                })
                 .map((entry) => (
                   <div
                     key={entry.id}
-                    className={`flex items-start gap-1.5 px-1 py-0.5 rounded ${
+                    className={`flex items-start gap-1.5 px-1.5 py-0.5 rounded ${
                       entry.type === 'error'
                         ? 'text-red-400 bg-red-950/20'
+                        : entry.type === 'summary' || entry.message.startsWith('[SUMMARY]')
+                        ? 'text-emerald-300 bg-emerald-950/30 border-l-2 border-emerald-500'
                         : entry.type === 'tool'
                         ? 'text-cyan-400'
                         : entry.type === 'edit'
@@ -653,7 +716,7 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
 
               {logs.length === 0 && (
                 <div className="text-center py-6 text-neutral-500 text-xs">
-                  No raw log entries recorded yet.
+                  No log entries recorded yet.
                 </div>
               )}
             </div>
