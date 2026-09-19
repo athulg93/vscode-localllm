@@ -17,6 +17,7 @@
     "AI",
     "Other"
   ],
+  "icon": "media/icon.png",
   "main": "./dist/extension.js",
   "activationEvents": [
     "onChatParticipant:localllm.participant"

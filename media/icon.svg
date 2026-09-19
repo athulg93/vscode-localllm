@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1e2e"/>
+      <stop offset="50%" stop-color="#181825"/>
+      <stop offset="100%" stop-color="#11111b"/>
+    </linearGradient>
+
+    <!-- Glowing Rim Gradient -->
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#007acc"/>
+      <stop offset="50%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+
+    <!-- Llama Body Gradient -->
+    <linearGradient id="llamaGrad" x1="20%" y1="10%" x2="80%" y2="90%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="45%" stop-color="#e2e8f0"/>
+      <stop offset="100%" stop-color="#cbd5e1"/>
+    </linearGradient>
+
+    <!-- Accent Neural Gradient -->
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+
+    <!-- Inner Shadow / Glow Filter -->
+    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- Base Rounded Squircle -->
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#bgGrad)" stroke="url(#borderGrad)" stroke-width="2.5" />
+
+  <!-- Background Cyber Circuit Grid Accent -->
+  <g opacity="0.15" stroke="#38bdf8" stroke-width="1.2" stroke-linecap="round">
+    <line x1="24" y1="36" x2="48" y2="36"/>
+    <line x1="48" y1="36" x2="58" y2="26"/>
+    <line x1="82" y1="100" x2="104" y2="100"/>
+    <line x1="104" y1="100" x2="112" y2="92"/>
+    <circle cx="24" cy="36" r="2" fill="#38bdf8"/>
+    <circle cx="112" cy="92" r="2" fill="#38bdf8"/>
+  </g>
+
+  <!-- Stylized Llama Silhouette -->
+  <g filter="url(#dropShadow)">
+    <!-- Ears -->
+    <!-- Left Ear -->
+    <path d="M 44,22 C 41,20 37,25 39,37 L 45,46 Z" fill="url(#llamaGrad)" />
+    <!-- Left Ear Inner -->
+    <path d="M 42,26 C 41,28 40,32 41,38 L 44,43 Z" fill="#f472b6" opacity="0.6"/>
+
+    <!-- Right Ear -->
+    <path d="M 58,19 C 55,17 50,22 53,35 L 59,44 Z" fill="url(#llamaGrad)" />
+    <!-- Right Ear Inner -->
+    <path d="M 55,23 C 54,26 53,30 54,36 L 57,41 Z" fill="#f472b6" opacity="0.6"/>
+
+    <!-- Head and Long Neck -->
+    <path d="M 42,44 
+             C 34,45 28,52 28,59 
+             C 28,66 33,70 41,70 
+             L 48,70 
+             L 48,96 
+             C 48,102 54,106 60,106 
+             L 86,106 
+             C 93,106 98,100 98,94 
+             L 98,84 
+             C 98,75 92,68 84,66 
+             L 66,66 
+             L 63,44 
+             C 62,38 52,41 42,44 Z" 
+          fill="url(#llamaGrad)" />
+
+    <!-- Cute Eye -->
+    <circle cx="39" cy="54" r="3.2" fill="#181825"/>
+    <circle cx="38" cy="53" r="1.1" fill="#ffffff"/>
+
+    <!-- Muzzle / Snout Details -->
+    <ellipse cx="30.5" cy="61" rx="2" ry="1.4" fill="#94a3b8" />
+
+    <!-- Fluffy Wool Chest Details -->
+    <path d="M 66,74 C 70,72 75,76 75,80 C 75,85 71,88 66,87" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+    <path d="M 72,85 C 77,83 82,87 81,92" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+  </g>
+
+  <!-- Neural Sparks / Orbit Nodes (AI Connection) -->
+  <!-- Spark 1 - Cyan -->
+  <g filter="url(#softGlow)">
+    <circle cx="94" cy="40" r="5" fill="#38bdf8"/>
+    <path d="M 94,31 L 94,49 M 85,40 L 103,40" stroke="#38bdf8" stroke-width="1.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- Spark 2 - Purple -->
+  <g filter="url(#softGlow)">
+    <circle cx="106" cy="62" r="3.5" fill="#c084fc"/>
+  </g>
+
+  <!-- Constellation link to Llama -->
+  <line x1="64" y1="46" x2="94" y2="40" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.7"/>
+  <line x1="94" y1="40" x2="106" y2="62" stroke="#c084fc" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.7"/>
+  <line x1="84" y1="68" x2="106" y2="62" stroke="#c084fc" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.5"/>
+
+  <!-- Small Amber Local Terminal Pulse -->
+  <circle cx="28" cy="94" r="3.5" fill="#fbbf24" opacity="0.8"/>
+  <circle cx="28" cy="94" r="6" fill="none" stroke="#fbbf24" stroke-width="1" opacity="0.4"/>
+</svg>

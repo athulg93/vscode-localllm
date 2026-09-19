@@ -6,16 +6,30 @@
 
 [![VS Code](https://img.shields.io/badge/VS%20Code-%E2%89%A5%201.96.0-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
 [![Ollama](https://img.shields.io/badge/Requires-Ollama-000000?logo=ollama&logoColor=white)](https://ollama.com/)
-[![Latest Release](https://img.shields.io/badge/release-v1.3.1-brightgreen)](https://github.com/athulg93/vscode-localllm/releases/download/v1.3.1/local-ollama-1.3.1.vsix)
+[![Latest Release](https://img.shields.io/badge/release-v1.4.0-brightgreen)](https://github.com/athulg93/vscode-localllm/releases/download/v1.4.0/local-ollama-1.4.0.vsix)
 
 </div>
 
 ---
 
-Local Ollama connects the **VS Code Chat** experience to an **Ollama server** running on your machine. Use local models for conversation, workspace-aware code analysis, bounded file exploration, and reviewable file edits — **without sending your source code to a hosted AI service.**
+Local Ollama connects the **VS Code Chat** experience to an **Ollama server** running on your machine. Use local models for conversation, workspace-aware code analysis, bounded file exploration, reviewable file edits, **Model Context Protocol (MCP)** tool execution, and **Procedural Skills playbooks** — **without sending your source code to a hosted AI service.**
+
+---
+
+### ✨ What's New in v1.4.0
+
+- 🌐 **Model Context Protocol (MCP) Integration**: Connect external tools, databases, and enterprise APIs using standard `.vscode/mcp.json`. Supports both `stdio` and `sse` transports, automatic process supervision, heartbeat recovery, and context-window schema budgeting for small local models (7B/8B).
+- 📜 **Procedural Skills Engine (`SKILL.md`)**: Teach local models repeatable, domain-specific engineering playbooks directly in Markdown. Supports automatic keyword triggers, `@mention` routing, and pre-flight tool dependency verification.
+- ⚡ **Token Budget Ceiling & Small-Model Optimization**: Enforces intelligent prompt budgeting (default 1,500 tokens) with priority-scored ranking (`@mention` > exact match > fuzzy match) to prevent 7B/8B local models from overflowing their context windows.
+- 🛡️ **Autonomous Tool ↔ Skill Pairing**: Pre-flight checks verify that tools declared in `requiresTools` are provided by active MCP servers. Explicit system guardrails prevent the model from hallucinating offline tool calls, accompanied by 1-click server restart actions in the UI.
+- 🧪 **Interactive Skill Trigger Simulator**: Test natural language prompts directly in the IDE to preview match scores, token estimates, and dependency readiness before sending queries to your local model.
+- 🎨 **Fresh Extension Icon & Dedicated Sidebars**: Brand new extension icon and dedicated sidebar views for **Model Context Protocol** and **Procedural Skills**.
+
+---
 
 ## Table of Contents
 
+- [What's New in v1.4.0](#-whats-new-in-v140)
 - [What It Does](#what-it-does)
 - [Requirements](#requirements)
 - [Install](#install)
@@ -71,7 +85,7 @@ ollama pull qwen2.5-coder:7b
 
 ### Option A — Install the published VSIX
 
-1. Download [`local-ollama-1.3.1.vsix`](https://github.com/athulg93/vscode-localllm/releases/download/v1.3.1/local-ollama-1.3.1.vsix) from the GitHub release.
+1. Download [`local-ollama-1.4.0.vsix`](https://github.com/athulg93/vscode-localllm/releases/download/v1.4.0/local-ollama-1.4.0.vsix) from the GitHub release.
 2. In VS Code, open **Extensions**.
 3. Click the `...` menu → **Install from VSIX...** → select the downloaded file.
 4. Reload VS Code if prompted.
